@@ -3,7 +3,7 @@
 pkgs.mkShell {
   packages = [
     # Python with HTTP + HTML parsing and notebook kernel
-    (pkgs.python3.withPackages (ps: with ps; [ requests beautifulsoup4 lxml ipykernel ]))
+    (pkgs.python3.withPackages (ps: with ps; [ requests beautifulsoup4 lxml flask ipykernel ]))
     pkgs.jupyter
   ];
 

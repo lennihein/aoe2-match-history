@@ -1,0 +1,16 @@
+{% if players %}
+<p class="subtitle" style="margin-bottom: 1rem;">Found {{ players|length }} results for "{{ query }}"</p>
+{% for player in players %}
+<div class="player-card" style="animation-delay: {{ loop.index0 * 0.1 }}s">
+    <div class="player-info">
+        <span class="player-name">{{ player.name }}</span>
+        <span class="player-id">ID: {{ player.id }}</span>
+    </div>
+    <button class="copy-btn" onclick="copyToClipboard('{{ player.id }}', this)">Copy ID</button>
+</div>
+{% endfor %}
+{% else %}
+<div class="player-card" style="justify-content: center; color: var(--text-muted);">
+    No players found for "{{ query }}". Try a different name.
+</div>
+{% endif %}

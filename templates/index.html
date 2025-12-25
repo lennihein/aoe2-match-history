@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AoE2 Player Search</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <meta name="description" content="Search for Age of Empires II players by platform ID and name.">
+</head>
+<body>
+    <div class="bg-gradient"></div>
+    <div class="container">
+        <header>
+            <h1>AoE2 Scout</h1>
+            <p class="subtitle">Quickly find player profiles and platform IDs</p>
+        </header>
+
+        <div class="search-container">
+            <form id="searchForm" class="search-form">
+                <input type="text" name="query" placeholder="Enter player name (e.g. TheViper)" required>
+                <button type="submit" id="searchBtn">
+                    <span id="btnText">Search</span>
+                </button>
+            </form>
+        </div>
+
+        <div id="results">
+            <!-- Results will be injected here via JS for better UX -->
+        </div>
+    </div>
+
+    <footer>
+        <p>&copy; 2024 AoE2 Scout. Built with passion for the Age community.</p>
+    </footer>
+
+    <script>
+        const form = document.getElementById('searchForm');
+        const resultsDiv = document.getElementById('results');
+        const btn = document.getElementById('searchBtn');
+        const btnText = document.getElementById('btnText');
+
+        form.onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = new FormData(form);
+            
+            // Show loader
+            btnText.innerHTML = '<span class="loader" style="width:20px;height:20px;border-width:2px;"></span>';
+            btn.disabled = true;
+            resultsDiv.style.opacity = '0.5';
+
+            try {
+                const response = await fetch('/search', {
+                    method: 'POST',
+                    body: formData
+                });
+                const html = await response.text();
+                resultsDiv.innerHTML = html;
+            } catch (err) {
+                resultsDiv.innerHTML = '<p style="color:red">Error fetching results. Please try again.</p>';
+            } finally {
+                btnText.textContent = 'Search';
+                btn.disabled = false;
+                resultsDiv.style.opacity = '1';
+            }
+        };
+
+        function copyToClipboard(text, btn) {
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                btn.style.background = '#10b981';
+                btn.style.borderColor = '#10b981';
+                btn.style.color = '#fff';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.background = '';
+                    btn.style.borderColor = '';
+                    btn.style.color = '';
+                }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>
