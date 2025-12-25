@@ -39,27 +39,142 @@
             </div>
             {% if sessions_data %}
             <div class="stat-card">
-                <span class="stat-label">Recent Sessions</span>
+                <span class="stat-label">Sessions</span>
                 <span class="stat-value">{{ sessions_data.count }}</span>
             </div>
             {% endif %}
         </div>
 
-        <div class="data-section">
-            <h2>RM 1v1 Analytics</h2>
-            <div class="stats-grid">
-                <div class="stat-card" style="background: rgba(255, 255, 255, 0.02);">
-                    <span class="stat-label">Favorite Civ</span>
-                    <span class="stat-value" style="font-size: 1.2rem; margin-top: 0.5rem;">
-                        {{ stats.civs_list[0].key if stats.civs_list else 'N/A' }}
-                    </span>
+        <div class="stats-container">
+            <!-- Civ Performance -->
+            <div class="data-card">
+                <h3>Civilization Performance</h3>
+                <div class="stat-list">
+                    {% for item in stats.civs_list[:5] %}
+                    <div class="stat-item">
+                        <span class="stat-name">{{ item.key }}</span>
+                        <div class="stat-progress-bg">
+                            <div class="stat-progress-bar" style="width: {{ item.win_rate }}%"></div>
+                        </div>
+                        <span class="stat-count">{{ item.wins }}/{{ item.matches }}</span>
+                        <span class="stat-percent">{{ "%.0f"|format(item.win_rate) }}%</span>
+                    </div>
+                    {% endfor %}
                 </div>
-                <div class="stat-card" style="background: rgba(255, 255, 255, 0.02);">
-                    <span class="stat-label">Tougest Opponent</span>
-                    <span class="stat-value" style="font-size: 1.2rem; margin-top: 0.5rem;">
-                        {% set worst_opp = stats.opponents_list | selectattr('win_rate', 'lt', 50) | first %}
-                        {{ worst_opp.name if worst_opp else 'None' }}
-                    </span>
+            </div>
+
+            <!-- Map Performance -->
+            <div class="data-card">
+                <h3>Map Performance</h3>
+                <div class="stat-list">
+                    {% for item in stats.maps_list[:5] %}
+                    <div class="stat-item">
+                        <span class="stat-name">{{ item.key }}</span>
+                        <div class="stat-progress-bg">
+                            <div class="stat-progress-bar"
+                                style="width: {{ item.win_rate }}%; background: var(--accent);"></div>
+                        </div>
+                        <span class="stat-count">{{ item.wins }}/{{ item.matches }}</span>
+                        <span class="stat-percent">{{ "%.0f"|format(item.win_rate) }}%</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <div class="stats-container">
+            <!-- Winrate by Duration -->
+            <div class="data-card">
+                <h3>Winrate by Match Duration</h3>
+                <div class="stat-list">
+                    {% for item in stats.duration_list %}
+                    <div class="stat-item">
+                        <span class="stat-name">{{ item.key }}</span>
+                        <div class="stat-progress-bg">
+                            <div class="stat-progress-bar"
+                                style="width: {{ item.win_rate }}%; background: var(--primary);"></div>
+                        </div>
+                        <span class="stat-count">{{ item.wins }}/{{ item.matches }}</span>
+                        <span class="stat-percent">{{ "%.0f"|format(item.win_rate) }}%</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Session Performance -->
+            {% if sessions_data %}
+            <div class="data-card">
+                <h3>Session Performance (Nth Game)</h3>
+                <div class="stat-list">
+                    {% for n in range(1, 6) %}
+                    {% set game_data = sessions_data.nth_stats.get(n) %}
+                    {% if game_data %}
+                    <div class="stat-item">
+                        <span class="stat-name">Game {{ n }}</span>
+                        <div class="stat-progress-bg">
+                            <div class="stat-progress-bar"
+                                style="width: {{ game_data.win_rate }}%; background: var(--accent);"></div>
+                        </div>
+                        <span class="stat-count">{{ game_data.wins }}/{{ game_data.matches }}</span>
+                        <span class="stat-percent">{{ "%.0f"|format(game_data.win_rate) }}%</span>
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                <p class="subtitle" style="font-size: 0.75rem; margin-top: 1rem; text-align: center;">
+                    Shows how your performance trends as the session continues.
+                </p>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="stats-container">
+            <!-- Psychological/Tilt Stats -->
+            {% if sessions_data %}
+            <div class="data-card">
+                <h3>Momentum (In-Session)</h3>
+                <div class="psychology-grid">
+                    {% set win_after_win = sessions_data.metrics.after_prev.get(True, {}).get('win_rate', 0) %}
+                    {% set win_after_loss = sessions_data.metrics.after_prev.get(False, {}).get('win_rate', 0) %}
+                    <div class="psych-card">
+                        <span class="psych-label">Winrate after Win</span>
+                        <span class="psych-value" style="color: #fff;">{{ "%.1f"|format(win_after_win) }}%</span>
+                        <span class="subtitle" style="font-size: 0.7rem;">
+                            {{ '(Momentum)' if win_after_win > stats.wins / stats.total * 100 else '(Inconsistent)' }}
+                        </span>
+                    </div>
+                    <div class="psych-card">
+                        <span class="psych-label">Winrate after Loss</span>
+                        <span class="psych-value" style="color: #fff;">{{ "%.1f"|format(win_after_loss) }}%</span>
+                        <span class="subtitle" style="font-size: 0.7rem;">
+                            {{ '(Mental Giant)' if win_after_loss > 50 else '(Tilt Risk)' }}
+                        </span>
+                    </div>
+                    <div class="psych-card">
+                        <span class="psych-label">1st Game Winrate</span>
+                        <span class="psych-value" style="color: #fff;">{{ "%.1f"|format(sessions_data.nth_stats.get(1,
+                            {}).get('win_rate', 0)) }}%</span>
+                        <span class="subtitle" style="font-size: 0.7rem;">(Warmup)</span>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Toughest Matchups -->
+            <div class="data-card">
+                <h3>Toughest Matchups (Vs Civ)</h3>
+                <div class="stat-list">
+                    {% set tough_matchups = stats.opp_civs_list | selectattr('win_rate', 'lt', 50) | list %}
+                    {% for item in tough_matchups[:3] %}
+                    <div class="stat-item">
+                        <span class="stat-name">{{ item.key }}</span>
+                        <div class="stat-progress-bg">
+                            <div class="stat-progress-bar" style="width: {{ item.win_rate }}%; background: #ef4444;">
+                            </div>
+                        </div>
+                        <span class="stat-percent">{{ "%.0f"|format(item.win_rate) }}%</span>
+                    </div>
+                    {% endfor %}
                 </div>
             </div>
         </div>
@@ -75,6 +190,8 @@
                             <th>Date</th>
                             <th>Mode</th>
                             <th>Map</th>
+                            <th>Duration</th>
+                            <th>ELO Δ</th>
                             <th>Result</th>
                             <th>Civ</th>
                         </tr>
@@ -85,16 +202,27 @@
                             <td>{{ match.start_datetime }}</td>
                             <td>{{ match.mode }}</td>
                             <td>{{ match.map }}</td>
+                            <td style="color: var(--text-muted); font-size: 0.9rem;">{{ match.duration }}</td>
                             <td>
-                                {% set ns = namespace(win=false, civ='') %}
+                                {% set ns = namespace(elo_change=0, win=false, civ='') %}
                                 {% for team in match.teams %}
                                 {% for p in team.players %}
                                 {% if p.player_id == user_id %}
+                                {% set ns.elo_change = p.elo_change %}
                                 {% if team.won %}{% set ns.win = true %}{% endif %}
                                 {% set ns.civ = p.civ %}
                                 {% endif %}
                                 {% endfor %}
                                 {% endfor %}
+                                {% if ns.elo_change %}
+                                <span class="{{ 'win' if ns.elo_change > 0 else 'loss' }}">
+                                    {{ '+' if ns.elo_change > 0 }}{{ ns.elo_change }}
+                                </span>
+                                {% else %}
+                                <span style="color: var(--text-muted);">--</span>
+                                {% endif %}
+                            </td>
+                            <td>
                                 <span class="{{ 'win' if ns.win else 'loss' }}">{{ 'Won' if ns.win else 'Lost' }}</span>
                             </td>
                             <td><span class="civ-badge">{{ ns.civ }}</span></td>

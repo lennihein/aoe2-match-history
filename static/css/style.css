@@ -369,6 +369,103 @@ button:active {
     animation: rotation 1s linear infinite;
 }
 
+/* Improved Stats Layouts */
+.stats-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+    gap: 2rem;
+    margin-bottom: 3rem;
+}
+
+.data-card {
+    background: var(--glass);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 1.5rem;
+    border-radius: 20px;
+}
+
+.data-card h3 {
+    font-size: 1.1rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 1.5rem;
+}
+
+.stat-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.stat-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.stat-name {
+    font-weight: 600;
+    color: #fff;
+    flex: 1;
+}
+
+.stat-progress-bg {
+    flex: 2;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    margin: 0 1rem;
+    overflow: hidden;
+    position: relative;
+}
+
+.stat-progress-bar {
+    height: 100%;
+    background: var(--primary);
+    border-radius: 4px;
+}
+
+.stat-count {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    width: 60px;
+    text-align: right;
+}
+
+.stat-percent {
+    font-weight: 700;
+    color: var(--accent);
+    width: 50px;
+    text-align: right;
+}
+
+/* Tilt Stats */
+.psychology-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.psych-card {
+    background: rgba(255, 255, 255, 0.02);
+    padding: 1rem;
+    border-radius: 12px;
+    text-align: center;
+}
+
+.psych-label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+}
+
+.psych-value {
+    font-size: 1.25rem;
+    font-weight: 800;
+}
+
 @keyframes rotation {
     0% {
         transform: rotate(0deg);

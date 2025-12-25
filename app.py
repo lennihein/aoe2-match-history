@@ -81,6 +81,9 @@ def player_profile(user_id):
         if stats:
             stats['opponents_list'] = mh.sorted_items_list(stats['opponents'], key_fn=lambda r: (-r['matches'], -r['wins']))
             stats['civs_list'] = mh.sorted_items_list(stats['civs'], key_fn=lambda r: (-r['matches'], -r['wins']))
+            stats['opp_civs_list'] = mh.sorted_items_list(stats['opp_civs'], key_fn=lambda r: (-r['matches'], -r['wins']))
+            stats['maps_list'] = mh.sorted_items_list(stats['maps'], key_fn=lambda r: (-r['matches'], -r['wins']))
+            stats['duration_list'] = mh.sorted_items_list(stats['duration'], key_fn=lambda r: (-r['matches'], -r['wins']))
             
         # Session analytics
         prepared, _, _ = mh.prepare_user_matches(matches, user_id, mode_filter=["RM 1v1"])

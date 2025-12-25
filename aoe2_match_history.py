@@ -114,6 +114,8 @@ def parse_match_tile(tile):
     map_name = map_node.get_text(strip=True) if map_node else None
     mode_node = tile.select_one(".col-md-3 a.stretched-link strong")
     mode = mode_node.get_text(" ", strip=True) if mode_node else None
+    if mode:
+        mode = re.sub(r"\s+", " ", mode).strip()
     teams = []
     for team in tile.select("ul.team"):
         team_info = {"won": "won" in team.get("class", []), "players": []}
@@ -304,6 +306,7 @@ def compute_ranked_stats(matches, user_id: str):
     duration_stats = defaultdict(lambda: {"matches": 0, "wins": 0})
     civ_stats = defaultdict(lambda: {"matches": 0, "wins": 0})
     opp_civ_stats = defaultdict(lambda: {"matches": 0, "wins": 0})
+    map_stats = defaultdict(lambda: {"matches": 0, "wins": 0})
 
     for match in matches:
         if match.get("mode") != "RM 1v1":
@@ -342,6 +345,12 @@ def compute_ranked_stats(matches, user_id: str):
             if user_win:
                 civ_stats[user_civ]["wins"] += 1
 
+        map_name = match.get("map")
+        if map_name:
+            map_stats[map_name]["matches"] += 1
+            if user_win:
+                map_stats[map_name]["wins"] += 1
+
         for op in opp_players:
             key = op.get("player_id") or f"name:{op.get('player_name')}"
             name = op.get("player_name") or key
@@ -363,6 +372,7 @@ def compute_ranked_stats(matches, user_id: str):
         "duration": duration_stats,
         "civs": civ_stats,
         "opp_civs": opp_civ_stats,
+        "maps": map_stats,
     }
 
 
