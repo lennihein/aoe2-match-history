@@ -10,9 +10,10 @@ import requests
 from bs4 import BeautifulSoup
 
 # Configuration (adjust here, no CLI args needed)
+import os
 USER_IDS = ["12649589"]
 BASE_URL = "https://www.aoe2insights.com/user/{user_id}/matches/?page={page}"
-DATA_DIR = Path("data")
+DATA_DIR = Path(os.getenv("AOE2_DATA_DIR", "data"))
 GAME_SPEED_FACTOR = 1.7  # AoE2 game time runs faster than real time
 SESSION_IDLE_MINUTES = 20  # minimum idle time (after previous game's end) to start a new session
 # Set to a list like ["RM 1v1"] to restrict session analytics to specific modes, or None for all
