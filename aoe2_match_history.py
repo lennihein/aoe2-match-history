@@ -246,7 +246,9 @@ def save_matches(matches, path: Path):
         json.dump(sorted_matches, f, ensure_ascii=False, indent=2)
 
 
-def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pages: int = MAX_FETCH_PAGES):
+def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pages: int = None):
+    if max_pages is None:
+        max_pages = MAX_FETCH_PAGES
     known_ids = set(known_ids or [])
     new_matches = []
     reached_known = False
@@ -610,7 +612,7 @@ def print_session_analytics(matches_by_user, mode_filter=None):
 # --- Orchestration ---
 
 
-def refresh_matches(user_id: str):
+def refresh_matches(user_id: str, max_pages: int = None):
     cache_path = cache_path_for(user_id)
     cached_matches = load_cached_matches(cache_path)
     if cache_path.exists():
@@ -619,7 +621,7 @@ def refresh_matches(user_id: str):
         print(f"[{user_id}] No cache found yet; starting fresh.")
 
     known_ids = {m.get("game_id") for m in cached_matches if m.get("game_id")}
-    new_matches = fetch_new_matches(user_id, known_ids=known_ids)
+    new_matches = fetch_new_matches(user_id, known_ids=known_ids, max_pages=max_pages)
     print(f"[{user_id}] New matches fetched: {len(new_matches)}")
 
     if new_matches:

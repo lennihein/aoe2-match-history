@@ -107,7 +107,7 @@ def player_profile(user_id):
 @app.route('/user/<user_id>/refresh', methods=['POST'])
 def refresh_player(user_id):
     try:
-        mh.refresh_matches(user_id)
+        mh.refresh_matches(user_id, max_pages=10)
         return jsonify({"status": "success"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
