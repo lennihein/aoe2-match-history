@@ -1,6 +1,12 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, redirect, url_for
 import requests
 from bs4 import BeautifulSoup
+import os
+import json
+from pathlib import Path
+
+# Import logic from match history script
+import aoe2_match_history as mh
 
 app = Flask(__name__)
 
@@ -59,5 +65,49 @@ def search():
     players = search_aoe2_player(query)
     return render_template('search_results.html', players=players, query=query)
 
+@app.route('/user/<user_id>')
+def player_profile(user_id):
+    player_name = request.args.get('name', f"Player {user_id}")
+    cache_path = mh.cache_path_for(user_id)
+    matches = mh.load_cached_matches(cache_path)
+    # Sort newest first for display
+    matches.sort(key=mh.match_sort_key, reverse=True)
+    
+    stats = None
+    sessions_data = None
+    if matches:
+        stats = mh.compute_ranked_stats(matches, user_id)
+        # Convert some stats for easy template iteration
+        if stats:
+            stats['opponents_list'] = mh.sorted_items_list(stats['opponents'], key_fn=lambda r: (-r['matches'], -r['wins']))
+            stats['civs_list'] = mh.sorted_items_list(stats['civs'], key_fn=lambda r: (-r['matches'], -r['wins']))
+            
+        # Session analytics
+        prepared, _, _ = mh.prepare_user_matches(matches, user_id, mode_filter=["RM 1v1"])
+        if prepared:
+            sessions = mh.group_sessions(prepared)
+            metrics = mh.session_metrics(sessions)
+            nth_stats = mh.nth_game_winrates(sessions)
+            sessions_data = {
+                "count": len(sessions),
+                "metrics": metrics,
+                "nth_stats": nth_stats
+            }
+
+    return render_template('player.html', 
+                           user_id=user_id, 
+                           player_name=player_name, 
+                           matches=matches[:20], # Show last 20 matches
+                           stats=stats,
+                           sessions_data=sessions_data)
+
+@app.route('/user/<user_id>/refresh', methods=['POST'])
+def refresh_player(user_id):
+    try:
+        mh.refresh_matches(user_id)
+        return jsonify({"status": "success"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5000, host='0.0.0.0')

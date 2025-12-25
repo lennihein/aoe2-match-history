@@ -1,13 +1,16 @@
 {% if players %}
 <p class="subtitle" style="margin-bottom: 1rem;">Found {{ players|length }} results for "{{ query }}"</p>
 {% for player in players %}
-<div class="player-card" style="animation-delay: {{ loop.index0 * 0.1 }}s">
-    <div class="player-info">
-        <span class="player-name">{{ player.name }}</span>
-        <span class="player-id">ID: {{ player.id }}</span>
+<a href="/user/{{ player.id }}?name={{ player.name | urlencode }}" class="player-card-link"
+    style="text-decoration: none;">
+    <div class="player-card" style="animation-delay: {{ loop.index0 * 0.1 }}s">
+        <div class="player-info">
+            <span class="player-name">{{ player.name }}</span>
+            <span class="player-id">ID: {{ player.id }}</span>
+        </div>
+        <div class="view-btn">View Profile →</div>
     </div>
-    <button class="copy-btn" onclick="copyToClipboard('{{ player.id }}', this)">Copy ID</button>
-</div>
+</a>
 {% endfor %}
 {% else %}
 <div class="player-card" style="justify-content: center; color: var(--text-muted);">

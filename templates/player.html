@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ player_name }} - AoE2 Scout</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body>
+    <div class="bg-gradient"></div>
+    <div class="container">
+        <header class="profile-header">
+            <div>
+                <a href="/" class="back-link">← Back to Search</a>
+                <h1 style="font-size: 2.5rem; text-align: left; margin-top: 1rem;">{{ player_name }}</h1>
+                <p class="subtitle">Insights ID: {{ user_id }}</p>
+            </div>
+            <button class="refresh-btn" id="refreshBtn" onclick="refreshProfile('{{ user_id }}')">
+                <span id="refreshIcon">🔄</span>
+                <span id="refreshText">Refresh Data</span>
+            </button>
+        </header>
+
+        {% if stats %}
+        <div class="stats-grid">
+            <div class="stat-card">
+                <span class="stat-label">RM 1v1 Matches</span>
+                <span class="stat-value">{{ stats.total }}</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Win Rate</span>
+                <span class="stat-value" style="color: #10b981;">{{ "%.1f"|format(stats.wins / stats.total * 100 if
+                    stats.total else 0) }}%</span>
+            </div>
+            {% if sessions_data %}
+            <div class="stat-card">
+                <span class="stat-label">Recent Sessions</span>
+                <span class="stat-value">{{ sessions_data.count }}</span>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="data-section">
+            <h2>RM 1v1 Analytics</h2>
+            <div class="stats-grid">
+                <div class="stat-card" style="background: rgba(255, 255, 255, 0.02);">
+                    <span class="stat-label">Favorite Civ</span>
+                    <span class="stat-value" style="font-size: 1.2rem; margin-top: 0.5rem;">
+                        {{ stats.civs_list[0].key if stats.civs_list else 'N/A' }}
+                    </span>
+                </div>
+                <div class="stat-card" style="background: rgba(255, 255, 255, 0.02);">
+                    <span class="stat-label">Tougest Opponent</span>
+                    <span class="stat-value" style="font-size: 1.2rem; margin-top: 0.5rem;">
+                        {% set worst_opp = stats.opponents_list | selectattr('win_rate', 'lt', 50) | first %}
+                        {{ worst_opp.name if worst_opp else 'None' }}
+                    </span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if matches %}
+        <div class="data-section">
+            <h2>Recent Match History</h2>
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Mode</th>
+                            <th>Map</th>
+                            <th>Result</th>
+                            <th>Civ</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for match in matches %}
+                        <tr class="match-row">
+                            <td>{{ match.start_datetime }}</td>
+                            <td>{{ match.mode }}</td>
+                            <td>{{ match.map }}</td>
+                            <td>
+                                {% set ns = namespace(win=false, civ='') %}
+                                {% for team in match.teams %}
+                                {% for p in team.players %}
+                                {% if p.player_id == user_id %}
+                                {% if team.won %}{% set ns.win = true %}{% endif %}
+                                {% set ns.civ = p.civ %}
+                                {% endif %}
+                                {% endfor %}
+                                {% endfor %}
+                                <span class="{{ 'win' if ns.win else 'loss' }}">{{ 'Won' if ns.win else 'Lost' }}</span>
+                            </td>
+                            <td><span class="civ-badge">{{ ns.civ }}</span></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% else %}
+        <div class="search-container" style="text-align: center;">
+            <p class="subtitle">No match history found locally.</p>
+            <p>Click "Refresh Data" to fetch matches from AoE2 Insights.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        async function refreshProfile(userId) {
+            const btn = document.getElementById('refreshBtn');
+            const icon = document.getElementById('refreshIcon');
+            const text = document.getElementById('refreshText');
+
+            btn.disabled = true;
+            icon.classList.add('spinning');
+            text.textContent = 'Refreshing...';
+
+            try {
+                const response = await fetch(`/user/${userId}/refresh`, { method: 'POST' });
+                const data = await response.json();
+                if (data.status === 'success') {
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            } catch (err) {
+                alert('Failed to refresh data.');
+            } finally {
+                btn.disabled = false;
+                icon.classList.remove('spinning');
+                text.textContent = 'Refresh Data';
+            }
+        }
+    </script>
+</body>
+
+</html>

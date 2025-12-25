@@ -10,7 +10,7 @@ import requests
 from bs4 import BeautifulSoup
 
 # Configuration (adjust here, no CLI args needed)
-USER_IDS = ["12559976", "10488108", "12649589"]
+USER_IDS = ["12649589"]
 BASE_URL = "https://www.aoe2insights.com/user/{user_id}/matches/?page={page}"
 DATA_DIR = Path("data")
 GAME_SPEED_FACTOR = 1.7  # AoE2 game time runs faster than real time
@@ -321,9 +321,6 @@ def compute_ranked_stats(matches, user_id: str):
                 break
         if user_player is None:
             continue
-        delta = user_player.get("elo_change")
-        if delta is None or delta == 0:
-            continue
         user_win = bool(teams[user_team_idx].get("won")) if user_team_idx is not None else False
         opp_players = [p for i, t in enumerate(teams) if i != user_team_idx for p in t.get("players", [])]
         if not opp_players:
@@ -373,7 +370,7 @@ def win_rate(row):
     return (row["wins"] / row["matches"] * 100) if row["matches"] else 0.0
 
 
-def sorted_items(d, key_fn=None):
+def sorted_items_list(d, key_fn=None):
     items = []
     for k, v in d.items():
         v = dict(v)
@@ -395,24 +392,24 @@ def print_ranked_analytics(matches_by_user):
             f"wins: {wins}, win rate: {(wins/total*100) if total else 0:.1f}%"
         )
 
-        opp_rows = sorted_items(stats["opponents"], key_fn=lambda r: (-r["matches"], -r["wins"]))
+        opp_rows = sorted_items_list(stats["opponents"], key_fn=lambda r: (-r["matches"], -r["wins"]))
         print("  Frequent opponents (top 5):")
         for row in opp_rows[:5]:
             print(f"    {row['name']}: {row['matches']} matches, {row['wins']} wins ({row['win_rate']:.1f}% win)")
 
         print("  Win rates by match duration:")
         duration_order = [b[0] for b in DURATION_BUCKETS]
-        duration_rows = {row["key"]: row for row in sorted_items(stats["duration"])}
+        duration_rows = {row["key"]: row for row in sorted_items_list(stats["duration"])}
         for label in duration_order:
             row = duration_rows.get(label, {"matches": 0, "wins": 0, "win_rate": 0})
             print(f"    {label}: {row['win_rate']:.1f}% ({row.get('wins',0)} wins / {row.get('matches',0)} matches)")
 
-        civ_rows = sorted_items(stats["civs"], key_fn=lambda r: (-r["matches"], -r["wins"]))
+        civ_rows = sorted_items_list(stats["civs"], key_fn=lambda r: (-r["matches"], -r["wins"]))
         print("  Win rates by your civilization (top 10):")
         for row in civ_rows[:10]:
             print(f"    {row['key']}: {row['win_rate']:.1f}% ({row['wins']} / {row['matches']})")
 
-        opp_civ_rows = sorted_items(stats["opp_civs"], key_fn=lambda r: (-r["matches"], -r["wins"]))
+        opp_civ_rows = sorted_items_list(stats["opp_civs"], key_fn=lambda r: (-r["matches"], -r["wins"]))
         print("  Win rates by opponent civilization (top 10):")
         for row in opp_civ_rows[:10]:
             print(f"    {row['key']}: {row['win_rate']:.1f}% ({row['wins']} / {row['matches']})")

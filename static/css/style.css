@@ -121,6 +121,150 @@ button:active {
     transform: translateY(0);
 }
 
+/* Search Result Links */
+.player-card-link {
+    display: block;
+    margin-bottom: 1rem;
+    transition: transform 0.2s ease;
+}
+
+.player-card-link:hover {
+    transform: scale(1.02);
+}
+
+.view-btn {
+    background: var(--primary);
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+/* Player Profile Styles */
+.profile-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+}
+
+.back-link {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.back-link:hover {
+    color: var(--primary);
+}
+
+.refresh-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: var(--accent);
+    color: var(--bg-dark);
+}
+
+.refresh-btn:hover {
+    background: #06b6d4;
+    box-shadow: 0 0 20px rgba(34, 211, 238, 0.3);
+}
+
+/* Stats Dashboard */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 3rem;
+}
+
+.stat-card {
+    background: var(--glass);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 1.5rem;
+    border-radius: 20px;
+    text-align: center;
+}
+
+.stat-value {
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--accent);
+    display: block;
+}
+
+.stat-label {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Lists and Tables */
+.data-section {
+    margin-bottom: 3rem;
+}
+
+.data-section h2 {
+    font-size: 1.5rem;
+    margin-bottom: 1.5rem;
+    color: #fff;
+    border-left: 4px solid var(--primary);
+    padding-left: 1rem;
+}
+
+.table-container {
+    background: var(--bg-card);
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.data-table th,
+.data-table td {
+    padding: 1rem;
+    text-align: left;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.data-table th {
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.win {
+    color: #10b981;
+}
+
+.loss {
+    color: #ef4444;
+}
+
+.match-row:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.civ-badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    background: rgba(99, 102, 241, 0.2);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 6px;
+    font-size: 0.8rem;
+}
+
 /* Results Area */
 #results {
     margin-top: 2rem;
@@ -233,6 +377,10 @@ button:active {
     100% {
         transform: rotate(360deg);
     }
+}
+
+.spinning {
+    animation: rotation 1s linear infinite;
 }
 
 footer {
