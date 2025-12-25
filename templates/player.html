@@ -200,8 +200,8 @@
                         {% for match in matches %}
                         <tr class="match-row">
                             <td>{{ match.start_datetime }}</td>
-                            <td>{{ match.mode }}</td>
-                            <td>{{ match.map }}</td>
+                            <td title="{{ match.mode }}">{{ match.mode }}</td>
+                            <td title="{{ match.map }}">{{ match.map }}</td>
                             <td style="color: var(--text-muted); font-size: 0.9rem;">{{ match.duration }}</td>
                             <td>
                                 {% set ns = namespace(elo_change=0, win=false, civ='') %}
