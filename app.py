@@ -100,7 +100,7 @@ def player_profile(user_id):
     return render_template('player.html', 
                            user_id=user_id, 
                            player_name=player_name, 
-                           matches=matches, # Show full history
+                           matches=matches[:100], # show last 100 in table for stability
                            stats=stats,
                            sessions_data=sessions_data)
 
