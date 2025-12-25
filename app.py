@@ -100,14 +100,14 @@ def player_profile(user_id):
     return render_template('player.html', 
                            user_id=user_id, 
                            player_name=player_name, 
-                           matches=matches[:100], # Show last 100 matches
+                           matches=matches, # Show full history
                            stats=stats,
                            sessions_data=sessions_data)
 
 @app.route('/user/<user_id>/refresh', methods=['POST'])
 def refresh_player(user_id):
     try:
-        mh.refresh_matches(user_id, max_pages=50)
+        mh.refresh_matches(user_id) # Full fetch (up to 2000 pages)
         return jsonify({"status": "success"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
