@@ -33,7 +33,7 @@
             cat <<EOF > $out/bin/aoe2-scout
             #!${pkgs.runtimeShell}
             export PYTHONPATH="\$PYTHONPATH:$out/lib/aoe2-scout"
-            exec ${pythonEnv}/bin/gunicorn --workers 3 --bind 0.0.0.0:5000 --chdir $out/lib/aoe2-scout app:app
+            exec ${pythonEnv}/bin/gunicorn --workers 3 --timeout 300 --bind 0.0.0.0:5000 --chdir $out/lib/aoe2-scout app:app
             EOF
             chmod +x $out/bin/aoe2-scout
           '';
