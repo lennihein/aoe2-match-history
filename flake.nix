@@ -1,5 +1,5 @@
 {
-  description: "AoE2 Scout WebUI";
+  description = "AoE2 Scout WebUI";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
