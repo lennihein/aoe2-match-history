@@ -282,6 +282,7 @@ def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pag
     reached_known = False
     reached_end = False
     is_complete = True
+    timed_out = False
     
     import time
     start_time = time.time()
@@ -292,6 +293,7 @@ def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pag
         if time.time() - start_time > timeout_seconds:
             print(f"Fetch timed out after {timeout_seconds} seconds. Returning partial results.")
             is_complete = False
+            timed_out = True
             break
             
         url = BASE_URL.format(user_id=user_id, page=page)
@@ -349,7 +351,7 @@ def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pag
         if last_page == start_page + max_pages - 1:
             is_complete = False # We hit the page limit, so it's partial.
         
-    return new_matches, is_complete, reached_known, reached_end, last_page
+    return new_matches, is_complete, reached_known, reached_end, last_page, timed_out
 
 
 # --- Ranked RM 1v1 stats ---
@@ -695,8 +697,8 @@ def refresh_matches(user_id: str, max_pages: int = None):
         print(f"[{user_id}] No cache found yet; starting fresh.")
 
     known_ids = {m.get("game_id") for m in cached_matches if m.get("game_id")}
-    new_matches, fetch_complete, reached_known, reached_end, last_page = fetch_new_matches(user_id, known_ids=known_ids, max_pages=max_pages)
-    print(f"[{user_id}] New matches fetched: {len(new_matches)} (Complete: {fetch_complete}, Reached known: {reached_known}, Reached end: {reached_end}, Last page: {last_page})")
+    new_matches, fetch_complete, reached_known, reached_end, last_page, timed_out = fetch_new_matches(user_id, known_ids=known_ids, max_pages=max_pages)
+    print(f"[{user_id}] New matches fetched: {len(new_matches)} (Complete: {fetch_complete}, Reached known: {reached_known}, Reached end: {reached_end}, Last page: {last_page}, Timed out: {timed_out})")
 
     # Determine overall completeness
     if not fetch_complete:
@@ -731,42 +733,67 @@ def refresh_matches(user_id: str, max_pages: int = None):
 
 def backfill_history(user_id: str, max_pages: int = None):
     cache_path = cache_path_for(user_id)
-    cached_matches = load_cached_matches(cache_path)
     current_status = load_status(user_id)
     
     start_page = current_status.get("last_page_fetched", 0) + 1
-    known_ids = {m.get("game_id") for m in cached_matches if m.get("game_id")}
     
     print(f"[{user_id}] Backfilling history starting from page {start_page}...")
-    new_matches, fetch_complete, reached_known, reached_end, last_page = fetch_new_matches(
-        user_id, 
-        known_ids=known_ids, 
-        start_page=start_page,
-        max_pages=max_pages, 
-        timeout_seconds=300,
-        stop_at_known=False # Don't stop if we see known games, we are looking for OLDER ones
-    )
     
-    print(f"[{user_id}] Older matches fetched: {len(new_matches)} (Complete: {fetch_complete}, Reached end: {reached_end}, Last page: {last_page})")
-
-    # If we reached the end, it's now complete
-    overall_complete = current_status.get("is_complete", False)
-    if fetch_complete and reached_end:
-        overall_complete = True
-    elif not fetch_complete:
-        overall_complete = False
-
-    save_status(user_id, {
-        "is_complete": overall_complete, 
-        "last_refresh": dt.datetime.now().isoformat(),
-        "last_page_fetched": last_page
-    })
-
-    if new_matches:
-        updated_matches = cached_matches + new_matches # Older games at the end for merging (save_matches will sort)
-        save_matches(updated_matches, cache_path)
-        print(f"[{user_id}] Saved {len(updated_matches)} total matches (added {len(new_matches)} older matches).")
+    batch_size = 20
+    remaining_pages = max_pages if max_pages else MAX_FETCH_PAGES
     
+    while remaining_pages > 0:
+        cached_matches = load_cached_matches(cache_path)
+        known_ids = {m.get("game_id") for m in cached_matches if m.get("game_id")}
+        chunk = min(batch_size, remaining_pages)
+        
+        new_matches, fetch_complete, reached_known, reached_end, last_page, timed_out = fetch_new_matches(
+            user_id, 
+            known_ids=known_ids, 
+            start_page=start_page,
+            max_pages=chunk, 
+            timeout_seconds=45, # Keep per-batch timeout manageable for web requests
+            stop_at_known=False
+        )
+        
+        print(f"[{user_id}] Batch result: fetched {len(new_matches)} matches. Last page: {last_page}, Timed out: {timed_out}, End: {reached_end}")
+
+        if new_matches:
+            # Multi-process safety: re-load before merge
+            cached_matches = load_cached_matches(cache_path)
+            known_ids = {m.get("game_id") for m in cached_matches if m.get("game_id")}
+            unique_new = [m for m in new_matches if m.get("game_id") not in known_ids]
+            if unique_new:
+                updated_matches = cached_matches + unique_new
+                save_matches(updated_matches, cache_path)
+                print(f"[{user_id}] Saved {len(unique_new)} new matches.")
+
+        # Update status incrementally
+        overall_complete = current_status.get("is_complete", False)
+        if fetch_complete and reached_end:
+            overall_complete = True
+        elif timed_out:
+            overall_complete = False
+        # If fetch_complete is False but not timed_out, it might be due to hit max_pages (chunk size)
+        elif not fetch_complete and not reached_end:
+             # We hit chunk limit, but not end. overall is still partial.
+             overall_complete = False
+
+        save_status(user_id, {
+            "is_complete": overall_complete, 
+            "last_refresh": dt.datetime.now().isoformat(),
+            "last_page_fetched": last_page
+        })
+        
+        if reached_end or timed_out:
+            break
+            
+        # Prepare for next batch
+        start_page = last_page + 1
+        remaining_pages -= (last_page - (start_page - 1) + 1)
+        if last_page < start_page - 1: # Safety break if no progress made
+            break
+
     return load_cached_matches(cache_path)
 
 
