@@ -202,6 +202,23 @@ button:active {
 .warning-content p {
     font-size: 0.85rem;
     color: var(--text-muted);
+    margin-bottom: 0.75rem;
+}
+
+.resume-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+    background: rgba(245, 158, 11, 0.2);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    color: #f59e0b;
+    border-radius: 8px;
+    font-weight: 600;
+}
+
+.resume-btn:hover {
+    background: #f59e0b;
+    color: #fff;
+    box-shadow: 0 0 15px rgba(245, 158, 11, 0.3);
 }
 
 /* Stats Dashboard */
@@ -574,6 +591,7 @@ footer {
     color: var(--text-muted);
     font-size: 0.9rem;
 }
+
 /* Light Mode Overrides */
 [data-theme="light"] {
     --bg-dark: #f8fafc;
@@ -582,7 +600,8 @@ footer {
     --text-muted: #64748b;
     --glass: rgba(255, 255, 255, 0.7);
     --primary: #4f46e5;
-    --accent: #0891b2; /* Darker cyan for light mode contrast */
+    --accent: #0891b2;
+    /* Darker cyan for light mode contrast */
 }
 
 /* Light Mode Specifics */
@@ -664,7 +683,7 @@ footer {
 }
 
 [data-theme="light"] .theme-toggle {
-    border-color: rgba(0,0,0,0.1);
+    border-color: rgba(0, 0, 0, 0.1);
 }
 
 /* Missing utility classes */

@@ -33,7 +33,12 @@
             <span class="warning-icon">⚠️</span>
             <div class="warning-content">
                 <strong>Partial History Loaded</strong>
-                <p>The match history for this player is too large to load fully in one go. Some older matches might be missing.</p>
+                <p>The match history for this player is too large to load fully in one go. Some older matches might be
+                    missing.</p>
+                <button class="resume-btn" id="backfillBtn" onclick="loadOlderHistory('{{ user_id }}')">
+                    <span id="backfillIcon">📥</span>
+                    <span id="backfillText">Load Older History</span>
+                </button>
             </div>
         </div>
         {% endif %}
@@ -277,6 +282,32 @@
                 btn.disabled = false;
                 icon.classList.remove('spinning');
                 text.textContent = 'Refresh Data';
+            }
+        }
+
+        async function loadOlderHistory(userId) {
+            const btn = document.getElementById('backfillBtn');
+            const icon = document.getElementById('backfillIcon');
+            const text = document.getElementById('backfillText');
+
+            btn.disabled = true;
+            icon.classList.add('spinning');
+            text.textContent = 'Loading Older...';
+
+            try {
+                const response = await fetch(`/user/${userId}/backfill`, { method: 'POST' });
+                const data = await response.json();
+                if (data.status === 'success') {
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            } catch (err) {
+                alert('Failed to load older data.');
+            } finally {
+                btn.disabled = false;
+                icon.classList.remove('spinning');
+                text.textContent = 'Load Older History';
             }
         }
     </script>

@@ -114,5 +114,13 @@ def refresh_player(user_id):
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route('/user/<user_id>/backfill', methods=['POST'])
+def backfill_player(user_id):
+    try:
+        mh.backfill_history(user_id)
+        return jsonify({"status": "success"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 if __name__ == '__main__':
     app.run(debug=True, port=5000, host='0.0.0.0')

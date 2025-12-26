@@ -19,7 +19,7 @@ SESSION_IDLE_MINUTES = 20  # minimum idle time (after previous game's end) to st
 # Set to a list like ["RM 1v1"] to restrict session analytics to specific modes, or None for all
 SESSION_MODE_FILTER = None
 MAX_FETCH_PAGES = 2000
-FETCH_TIMEOUT_SECONDS = 30
+FETCH_TIMEOUT_SECONDS = 12
 
 SESSION = requests.Session()
 SESSION.headers.update(
@@ -269,7 +269,7 @@ def save_matches(matches, path: Path):
         json.dump(sorted_matches, f, ensure_ascii=False, indent=2)
 
 
-def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pages: int = None, timeout_seconds: int = None):
+def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pages: int = None, timeout_seconds: int = None, stop_at_known: bool = True):
     if max_pages is None:
         max_pages = MAX_FETCH_PAGES
     if timeout_seconds is None:
@@ -284,6 +284,7 @@ def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pag
     import time
     start_time = time.time()
     
+    last_page = start_page - 1
     for page in range(start_page, start_page + max_pages):
         # Check timeout
         if time.time() - start_time > timeout_seconds:
@@ -304,6 +305,7 @@ def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pag
         if "#not found" in text_lower or resp.status_code == 404:
             print("Reached end of history (#not found or 404).")
             reached_end = True
+            last_page = page
             break
         if resp.status_code >= 400:
             print(f"Hit an HTTP error {resp.status_code}; stopping fetch.")
@@ -314,26 +316,38 @@ def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pag
         if not tiles:
             print("No match tiles found on this page; stopping fetch.")
             reached_end = True
+            last_page = page
             break
+            
+        page_has_new = False
         for tile in tiles:
             match = parse_match_tile(tile)
             game_id = match.get("game_id")
             if not game_id:
                 continue
             if game_id in known_ids:
-                print(f"Encountered cached match {game_id}; stopping at previously stored data.")
                 reached_known = True
-                break
+                if stop_at_known:
+                    print(f"Encountered cached match {game_id}; stopping at previously stored data.")
+                    break
+                else:
+                    continue # Skip and keep looking for older matches
             new_matches.append(match)
-        if reached_known:
+            page_has_new = True
+            
+        last_page = page
+        if reached_known and stop_at_known:
             break
     
     # If we didn't timeout, didn't reach end, and didn't reach known, 
     # but the loop finished, it means we hit max_pages.
-    if is_complete and not reached_end and not reached_known:
-        is_complete = False # We hit the page limit, so it's partial.
+    if is_complete and not reached_end and (not reached_known or not stop_at_known):
+        # Check if we actually processed all pages we intended
+        # range(start_page, start_page + max_pages) has max_pages items.
+        if last_page == start_page + max_pages - 1:
+            is_complete = False # We hit the page limit, so it's partial.
         
-    return new_matches, is_complete, reached_known, reached_end
+    return new_matches, is_complete, reached_known, reached_end, last_page
 
 
 # --- Ranked RM 1v1 stats ---
@@ -679,8 +693,8 @@ def refresh_matches(user_id: str, max_pages: int = None):
         print(f"[{user_id}] No cache found yet; starting fresh.")
 
     known_ids = {m.get("game_id") for m in cached_matches if m.get("game_id")}
-    new_matches, fetch_complete, reached_known, reached_end = fetch_new_matches(user_id, known_ids=known_ids, max_pages=max_pages)
-    print(f"[{user_id}] New matches fetched: {len(new_matches)} (Complete: {fetch_complete}, Reached known: {reached_known}, Reached end: {reached_end})")
+    new_matches, fetch_complete, reached_known, reached_end, last_page = fetch_new_matches(user_id, known_ids=known_ids, max_pages=max_pages)
+    print(f"[{user_id}] New matches fetched: {len(new_matches)} (Complete: {fetch_complete}, Reached known: {reached_known}, Reached end: {reached_end}, Last page: {last_page})")
 
     # Determine overall completeness
     if not fetch_complete:
@@ -694,7 +708,11 @@ def refresh_matches(user_id: str, max_pages: int = None):
         # This case should be covered by is_complete = False in fetch_new_matches if it hits max_pages
         overall_complete = False
 
-    save_status(user_id, {"is_complete": overall_complete, "last_refresh": dt.datetime.now().isoformat()})
+    save_status(user_id, {
+        "is_complete": overall_complete, 
+        "last_refresh": dt.datetime.now().isoformat(),
+        "last_page_fetched": last_page
+    })
 
     if new_matches:
         updated_matches = new_matches + cached_matches
@@ -707,6 +725,46 @@ def refresh_matches(user_id: str, max_pages: int = None):
     print(f"[{user_id}] Saved {len(updated_matches)} total matches to {cache_path}.")
     print(f"[{user_id}] Total matches available locally: {len(updated_matches)}")
     return updated_matches
+
+
+def backfill_history(user_id: str, max_pages: int = None):
+    cache_path = cache_path_for(user_id)
+    cached_matches = load_cached_matches(cache_path)
+    current_status = load_status(user_id)
+    
+    start_page = current_status.get("last_page_fetched", 0) + 1
+    known_ids = {m.get("game_id") for m in cached_matches if m.get("game_id")}
+    
+    print(f"[{user_id}] Backfilling history starting from page {start_page}...")
+    new_matches, fetch_complete, reached_known, reached_end, last_page = fetch_new_matches(
+        user_id, 
+        known_ids=known_ids, 
+        start_page=start_page,
+        max_pages=max_pages, 
+        stop_at_known=False # Don't stop if we see known games, we are looking for OLDER ones
+    )
+    
+    print(f"[{user_id}] Older matches fetched: {len(new_matches)} (Complete: {fetch_complete}, Reached end: {reached_end}, Last page: {last_page})")
+
+    # If we reached the end, it's now complete
+    overall_complete = current_status.get("is_complete", False)
+    if fetch_complete and reached_end:
+        overall_complete = True
+    elif not fetch_complete:
+        overall_complete = False
+
+    save_status(user_id, {
+        "is_complete": overall_complete, 
+        "last_refresh": dt.datetime.now().isoformat(),
+        "last_page_fetched": last_page
+    })
+
+    if new_matches:
+        updated_matches = cached_matches + new_matches # Older games at the end for merging (save_matches will sort)
+        save_matches(updated_matches, cache_path)
+        print(f"[{user_id}] Saved {len(updated_matches)} total matches (added {len(new_matches)} older matches).")
+    
+    return load_cached_matches(cache_path)
 
 
 def main():
