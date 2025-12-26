@@ -99,6 +99,8 @@ def duration_to_real_seconds(duration_str: str, speed_factor: float = GAME_SPEED
 
 
 def cache_path_for(user_id: str):
+    if not user_id.isdigit():
+        raise ValueError(f"Invalid user_id: {user_id}. Must be numeric.")
     return DATA_DIR / f"matches_{user_id}.json"
 
 
