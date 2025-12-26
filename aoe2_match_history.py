@@ -741,6 +741,7 @@ def backfill_history(user_id: str, max_pages: int = None):
         known_ids=known_ids, 
         start_page=start_page,
         max_pages=max_pages, 
+        timeout_seconds=300,
         stop_at_known=False # Don't stop if we see known games, we are looking for OLDER ones
     )
     
