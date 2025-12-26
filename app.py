@@ -127,6 +127,10 @@ def player_stats_partial(user_id):
 @app.route('/user/<int:user_id>/refresh', methods=['POST'])
 def refresh_player(user_id):
     user_id = str(user_id)
+    # Prevent concurrent refresh/backfill for the same user
+    if user_id in BACKFILL_STATUS and BACKFILL_STATUS[user_id].get("status") == "running":
+        return jsonify({"status": "error", "message": "Backfill is currently in progress. Please wait for it to complete."}), 409
+        
     try:
         mh.refresh_matches(user_id) # Full fetch (up to 2000 pages)
         return jsonify({"status": "success"})

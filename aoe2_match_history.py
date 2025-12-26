@@ -3,11 +3,16 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+import threading
 from collections import defaultdict
 from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
+
+# Global locks to prevent concurrent writes to the same user's data
+# Using a Lock per user is overkill for most use cases, a single lock is fine for now.
+STATE_LOCK = threading.Lock()
 
 # Configuration (adjust here, no CLI args needed)
 import os
@@ -729,24 +734,25 @@ def refresh_matches(user_id: str, max_pages: int = None):
         # This case should be covered by is_complete = False in fetch_new_matches if it hits max_pages
         overall_complete = False
 
-    save_status(user_id, {
-        "is_complete": overall_complete, 
-        "last_refresh": dt.datetime.now().isoformat(),
-        "last_page_fetched": max(last_page, current_status.get("last_page_fetched", 0))
-    })
+    with STATE_LOCK:
+        # Reload cache to safely merge with any concurrent updates (e.g. from background backfill)
+        latest_cache = load_cached_matches(cache_path)
+        if new_matches:
+            existing_ids = {m["game_id"] for m in latest_cache if m.get("game_id")}
+            unique_new = [m for m in new_matches if m.get("game_id") not in existing_ids]
+            updated_matches = unique_new + latest_cache
+            print(f"[{user_id}] Merging {len(unique_new)} new matches with current cache...")
+        else:
+            updated_matches = latest_cache
+            print(f"[{user_id}] No new matches added; cache is current.")
 
-    # Reload cache to safely merge with any concurrent updates (e.g. from background backfill)
-    latest_cache = load_cached_matches(cache_path)
-    if new_matches:
-        existing_ids = {m["game_id"] for m in latest_cache if m.get("game_id")}
-        unique_new = [m for m in new_matches if m.get("game_id") not in existing_ids]
-        updated_matches = unique_new + latest_cache
-        print(f"[{user_id}] Merging {len(unique_new)} new matches with current cache...")
-    else:
-        updated_matches = latest_cache
-        print(f"[{user_id}] No new matches added; cache is current.")
-
-    save_matches(updated_matches, cache_path)
+        save_matches(updated_matches, cache_path)
+        
+        save_status(user_id, {
+            "is_complete": overall_complete, 
+            "last_refresh": dt.datetime.now().isoformat(),
+            "last_page_fetched": max(last_page, current_status.get("last_page_fetched", 0))
+        })
     print(f"[{user_id}] Saved {len(updated_matches)} total matches to {cache_path}.")
     print(f"[{user_id}] Total matches available locally: {len(updated_matches)}")
     return updated_matches
@@ -769,24 +775,25 @@ def backfill_history(user_id: str, max_pages: int = None, status_callback=None):
                 print(f"Warning: status_callback failed: {e}")
 
         if current_new_matches:
-            # Reload cache from disk to avoid overwriting concurrent changes (e.g. from refresh)
-            latest_cache = load_cached_matches(cache_path)
-            existing_ids = {m["game_id"] for m in latest_cache if m.get("game_id")}
-            
-            # Filter out new matches that are already in the cache (deduplication)
-            unique_new = [m for m in current_new_matches if m.get("game_id") not in existing_ids]
-            
-            updated = latest_cache + unique_new
-            save_matches(updated, cache_path)
+            with STATE_LOCK:
+                # Reload cache from disk to avoid overwriting concurrent changes (e.g. from refresh)
+                latest_cache = load_cached_matches(cache_path)
+                existing_ids = {m["game_id"] for m in latest_cache if m.get("game_id")}
+                
+                # Filter out new matches that are already in the cache (deduplication)
+                unique_new = [m for m in current_new_matches if m.get("game_id") not in existing_ids]
+                
+                updated = latest_cache + unique_new
+                save_matches(updated, cache_path)
 
-        # Update status incrementally
-        status_update = {
-            "is_complete": False, 
-            "last_refresh": dt.datetime.now().isoformat(),
-            "last_page_fetched": current_page
-        }
-        save_status(user_id, status_update)
-        print(f"[{user_id}] Progress saved at page {current_page} ({len(current_new_matches)} new matches so far).")
+                # Update status incrementally
+                status_update = {
+                    "is_complete": False, 
+                    "last_refresh": dt.datetime.now().isoformat(),
+                    "last_page_fetched": current_page
+                }
+                save_status(user_id, status_update)
+                print(f"[{user_id}] Progress saved at page {current_page} ({len(current_new_matches)} new matches so far).")
     
     print(f"[{user_id}] Backfilling history starting from page {start_page}...")
     new_matches, fetch_complete, reached_known, reached_end, last_page, timed_out = fetch_new_matches(
@@ -808,21 +815,22 @@ def backfill_history(user_id: str, max_pages: int = None, status_callback=None):
     elif timed_out or not fetch_complete:
         overall_complete = False
 
-    save_status(user_id, {
-        "is_complete": overall_complete, 
-        "last_refresh": dt.datetime.now().isoformat(),
-        "last_page_fetched": max(last_page, current_status.get("last_page_fetched", 0))
-    })
+    with STATE_LOCK:
+        save_status(user_id, {
+            "is_complete": overall_complete, 
+            "last_refresh": dt.datetime.now().isoformat(),
+            "last_page_fetched": max(last_page, current_status.get("last_page_fetched", 0))
+        })
 
-    if new_matches:
-        # Reload cache to safely merge with any concurrent updates
-        latest_cache = load_cached_matches(cache_path)
-        existing_ids = {m["game_id"] for m in latest_cache if m.get("game_id")}
-        unique_new = [m for m in new_matches if m.get("game_id") not in existing_ids]
+        if new_matches:
+            # Reload cache to safely merge with any concurrent updates
+            latest_cache = load_cached_matches(cache_path)
+            existing_ids = {m["game_id"] for m in latest_cache if m.get("game_id")}
+            unique_new = [m for m in new_matches if m.get("game_id") not in existing_ids]
 
-        updated_matches = latest_cache + unique_new
-        save_matches(updated_matches, cache_path)
-        print(f"[{user_id}] Saved {len(updated_matches)} total matches (added {len(unique_new)} older matches).")
+            updated_matches = latest_cache + unique_new
+            save_matches(updated_matches, cache_path)
+            print(f"[{user_id}] Saved {len(updated_matches)} total matches (added {len(unique_new)} older matches).")
     
     return load_cached_matches(cache_path)
 
