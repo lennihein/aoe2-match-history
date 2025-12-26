@@ -735,12 +735,16 @@ def refresh_matches(user_id: str, max_pages: int = None):
         "last_page_fetched": max(last_page, current_status.get("last_page_fetched", 0))
     })
 
+    # Reload cache to safely merge with any concurrent updates (e.g. from background backfill)
+    latest_cache = load_cached_matches(cache_path)
     if new_matches:
-        updated_matches = new_matches + cached_matches
-        print(f"[{user_id}] Merging {len(new_matches)} new matches with {len(cached_matches)} cached matches...")
+        existing_ids = {m["game_id"] for m in latest_cache if m.get("game_id")}
+        unique_new = [m for m in new_matches if m.get("game_id") not in existing_ids]
+        updated_matches = unique_new + latest_cache
+        print(f"[{user_id}] Merging {len(unique_new)} new matches with current cache...")
     else:
-        updated_matches = cached_matches
-        print(f"[{user_id}] No new matches added; cache is already up to date.")
+        updated_matches = latest_cache
+        print(f"[{user_id}] No new matches added; cache is current.")
 
     save_matches(updated_matches, cache_path)
     print(f"[{user_id}] Saved {len(updated_matches)} total matches to {cache_path}.")
@@ -764,9 +768,15 @@ def backfill_history(user_id: str, max_pages: int = None, status_callback=None):
             except Exception as e:
                 print(f"Warning: status_callback failed: {e}")
 
-        # Merge with cached matches and save to disk
         if current_new_matches:
-            updated = cached_matches + current_new_matches
+            # Reload cache from disk to avoid overwriting concurrent changes (e.g. from refresh)
+            latest_cache = load_cached_matches(cache_path)
+            existing_ids = {m["game_id"] for m in latest_cache if m.get("game_id")}
+            
+            # Filter out new matches that are already in the cache (deduplication)
+            unique_new = [m for m in current_new_matches if m.get("game_id") not in existing_ids]
+            
+            updated = latest_cache + unique_new
             save_matches(updated, cache_path)
 
         # Update status incrementally
@@ -805,9 +815,14 @@ def backfill_history(user_id: str, max_pages: int = None, status_callback=None):
     })
 
     if new_matches:
-        updated_matches = cached_matches + new_matches
+        # Reload cache to safely merge with any concurrent updates
+        latest_cache = load_cached_matches(cache_path)
+        existing_ids = {m["game_id"] for m in latest_cache if m.get("game_id")}
+        unique_new = [m for m in new_matches if m.get("game_id") not in existing_ids]
+
+        updated_matches = latest_cache + unique_new
         save_matches(updated_matches, cache_path)
-        print(f"[{user_id}] Saved {len(updated_matches)} total matches (added {len(new_matches)} older matches).")
+        print(f"[{user_id}] Saved {len(updated_matches)} total matches (added {len(unique_new)} older matches).")
     
     return load_cached_matches(cache_path)
 
