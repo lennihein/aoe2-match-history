@@ -69,11 +69,9 @@ def search():
     players = search_aoe2_player(query)
     return render_template('search_results.html', players=players, query=query)
 
-@app.route('/user/<int:user_id>')
-def player_profile(user_id):
+def get_player_context(user_id):
     # Ensure user_id is a string for the match history logic
     user_id = str(user_id)
-    player_name = request.args.get('name', f"Player {user_id}")
     cache_path = mh.cache_path_for(user_id)
     matches = mh.load_cached_matches(cache_path)
     # Sort newest first for display
@@ -81,7 +79,6 @@ def player_profile(user_id):
     
     stats = None
     sessions_data = None
-    fetch_status = mh.load_status(user_id)
     
     if matches:
         stats = mh.compute_ranked_stats(matches, user_id)
@@ -104,13 +101,28 @@ def player_profile(user_id):
                 "nth_stats": nth_stats
             }
 
-    return render_template('player.html', 
-                           user_id=user_id, 
-                           player_name=player_name, 
-                           matches=matches[:100], # show last 100 in table for stability
-                           stats=stats,
-                           sessions_data=sessions_data,
-                           fetch_status=fetch_status)
+    return {
+        "user_id": user_id,
+        "matches": matches[:100], # show last 100 in table for stability
+        "stats": stats,
+        "sessions_data": sessions_data
+    }
+
+@app.route('/user/<int:user_id>')
+def player_profile(user_id):
+    context = get_player_context(user_id)
+    context["player_name"] = request.args.get('name', f"Player {user_id}")
+    context["fetch_status"] = mh.load_status(str(user_id))
+    return render_template('player.html', **context)
+
+@app.route('/user/<int:user_id>/stats_partial')
+def player_stats_partial(user_id):
+    context = get_player_context(user_id)
+    # We don't need player_name or fetch_status for the partial stats view typically,
+    # unless they are used in player_content.html (which stats is, fetch_status maybe not)
+    # Checking player_content.html: it uses stats, sessions_data, matches, user_id.
+    # It does NOT use fetch_status or player_name (header is in player.html).
+    return render_template('player_content.html', **context)
 
 @app.route('/user/<int:user_id>/refresh', methods=['POST'])
 def refresh_player(user_id):

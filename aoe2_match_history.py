@@ -267,8 +267,12 @@ def match_sort_key(match):
 def save_matches(matches, path: Path):
     sorted_matches = sorted(matches, key=match_sort_key, reverse=False)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
+    # Write to a temporary file first to ensure atomic updates
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    with temp_path.open("w", encoding="utf-8") as f:
         json.dump(sorted_matches, f, ensure_ascii=False, indent=2)
+    # Atomic replace
+    temp_path.replace(path)
 
 
 def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pages: int = None, timeout_seconds: int = None, stop_at_known: bool = True, progress_callback=None):
