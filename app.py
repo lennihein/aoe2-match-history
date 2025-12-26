@@ -16,6 +16,10 @@ SESSION.headers.update({
 })
 
 def search_aoe2_player(name):
+    """
+    Search for players. Currently uses aoe2insights for broad search 
+    as native API search is limited to top leaderboard pages.
+    """
     url = f"https://www.aoe2insights.com/search/?q={name}"
     try:
         resp = SESSION.get(url, timeout=10)
@@ -102,12 +106,13 @@ def player_profile(user_id):
                            player_name=player_name, 
                            matches=matches[:100], # show last 100 in table for stability
                            stats=stats,
+                           relic_id=str(mh.get_relic_id(user_id) or user_id),
                            sessions_data=sessions_data)
 
 @app.route('/user/<user_id>/refresh', methods=['POST'])
 def refresh_player(user_id):
     try:
-        mh.refresh_matches(user_id) # Full fetch (up to 2000 pages)
+        mh.refresh_matches(user_id) # Fetches using Relic Native API
         return jsonify({"status": "success"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

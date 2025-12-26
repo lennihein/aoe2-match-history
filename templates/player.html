@@ -207,7 +207,7 @@
                                 {% set ns = namespace(elo_change=0, win=false, civ='') %}
                                 {% for team in match.teams %}
                                 {% for p in team.players %}
-                                {% if p.player_id == user_id %}
+                                {% if p.player_id == user_id or p.player_id == relic_id %}
                                 {% set ns.elo_change = p.elo_change %}
                                 {% if team.won %}{% set ns.win = true %}{% endif %}
                                 {% set ns.civ = p.civ %}

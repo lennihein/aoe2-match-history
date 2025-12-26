@@ -101,65 +101,218 @@ def cache_path_for(user_id: str):
     return DATA_DIR / f"matches_{user_id}.json"
 
 
-def parse_match_tile(tile):
-    match_id_node = tile.select_one(".text-muted small")
-    game_id = match_id_node.get_text(strip=True).lstrip("#") if match_id_node else None
-    duration_icon = tile.select_one(".mt-2 .fa-clock")
-    duration = duration_icon.parent.get_text(" ", strip=True) if duration_icon else None
-    date_span = tile.select_one(".mt-2 span[title]")
-    dt_value = date_span["title"].strip() if date_span and date_span.has_attr("title") else None
-    start_dt = parse_datetime_value(dt_value)
-    real_duration = duration_to_real_seconds(duration)
-    end_dt = start_dt + dt.timedelta(seconds=real_duration) if start_dt and real_duration is not None else None
-    map_node = tile.select_one(".col-md-3 .d-flex.flex-column > div:nth-of-type(2)")
-    map_name = map_node.get_text(strip=True) if map_node else None
-    mode_node = tile.select_one(".col-md-3 a.stretched-link strong")
-    mode = mode_node.get_text(" ", strip=True) if mode_node else None
-    if mode:
-        mode = re.sub(r"\s+", " ", mode).strip()
+# Mappings from Relic API (Age II)
+# Correct Civilization List matching Relic API indices (Alphabetical order of standard civs)
+# Derived from reverse-engineering API IDs 26->Lithuanians and 41->Teutons
+CIV_LIST = [
+    "Armenians", "Aztecs", "Bengalis", "Berbers", "Bohemians", "Britons", 
+    "Bulgarians", "Burgundians", "Burmese", "Byzantines", "Celts", "Chinese", 
+    "Cumans", "Dravidians", "Ethiopians", "Franks", "Georgians", "Goths", 
+    "Gurjaras", "Hindustanis", "Huns", "Incas", "Italians", "Japanese", 
+    "Khmer", "Koreans", "Lithuanians", "Magyars", "Malay", "Malians", 
+    "Mayans", "Mongols", "Persians", "Poles", "Portuguese", "Romans", 
+    "Saracens", "Sicilians", "Slavs", "Spanish", "Tatars", "Teutons", 
+    "Turks", "Vietnamese", "Vikings"
+]
+
+CIV_MAP = {i: name for i, name in enumerate(CIV_LIST)}
+
+MODE_MAP = {
+    0: "Custom",
+    1: "RM 1v1", 2: "RM 1v1", 3: "RM 2v2", 4: "RM 3v3", 5: "RM 4v4",
+    6: "RM 1v1", 7: "RM 2v2", 8: "RM 3v3", 9: "RM 4v4",
+    10: "FFA",
+    26: "EW 1v1", 27: "EW 2v2", 28: "EW 3v3", 29: "EW 4v4",
+    60: "Custom DM 1v1", 61: "Custom DM Team",
+    66: "RM 1v1", 67: "RM 2v2", 68: "RM 3v3", 69: "RM 4v4",
+    86: "RM 1v1", 87: "RM 2v2", 88: "RM 3v3", 89: "RM 4v4",
+    120: "Custom", 121: "Custom", 122: "Custom", 123: "Custom", 124: "Custom", 125: "Custom"
+}
+
+def clean_map_name(name: str) -> str:
+    if not name: return "Unknown"
+    # Strip .rms/.rms2 extensions
+    name = re.sub(r"\.rms\d*$", "", name, flags=re.IGNORECASE)
+    # Title-case unless it's a known custom placeholder
+    if name.lower() != "my map":
+        name = name.title()
+    return name.strip()
+
+def determine_win(team: dict, player: dict) -> bool:
+    # Ranked games: use elo_change if present
+    if player.get("elo_change"):
+        return player["elo_change"] > 0
+    # Unranked: use outcome if present
+    if "outcome" in player: # outcome 1 = Win, 0 = Loss
+        # Ensure it's explicitly 1 or 0, not None
+        return player["outcome"] == 1
+    # Fallback to team won flag
+    return team.get("won", False)
+
+ID_MAPPING_FILE = DATA_DIR / "id_mappings.json"
+
+def load_id_mappings():
+    if ID_MAPPING_FILE.exists():
+        with ID_MAPPING_FILE.open("r") as f:
+            return json.load(f)
+    return {}
+
+def save_id_mapping(insights_id, relic_id):
+    mappings = load_id_mappings()
+    mappings[insights_id] = relic_id
+    ID_MAPPING_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with ID_MAPPING_FILE.open("w") as f:
+        json.dump(mappings, f, indent=2)
+
+def get_relic_id(insights_id):
+    """
+    Tries to find the Relic profile_id for a given AoE2 Insights user ID.
+    """
+    # Check cache first
+    mappings = load_id_mappings()
+    if insights_id in mappings:
+        return mappings[insights_id]
+
+    # Check if the insights_id is already a working Relic ID (like TheViper 196240)
+    # We'll try to fetch recent matches for it.
+    print(f"Checking if {insights_id} is already a Relic ID...")
+    test_url = f"https://aoe-api.reliclink.com/community/leaderboard/getRecentMatchHistory?title=age2&profile_ids=[{insights_id}]&count=1"
+    try:
+        resp = SESSION.get(test_url, timeout=10, verify=False)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("matchHistoryStats"):
+                print(f"Verified {insights_id} as a Relic ID.")
+                save_id_mapping(insights_id, insights_id)
+                return insights_id
+    except:
+        pass
+
+    # Scrape Insights profile to find "Game Id"
+    url = f"https://www.aoe2insights.com/user/{insights_id}/"
+    print(f"Scraping Insights profile {url} to find Relic ID...")
+    try:
+        resp = SESSION.get(url, timeout=15)
+        if resp.status_code == 200:
+            # Look for <small class="badge text-bg-secondary">Game Id: 598457</small>
+            match = re.search(r"Game Id: (\d+)", resp.text)
+            if match:
+                relic_id = match.group(1)
+                print(f"Found Relic ID: {relic_id}")
+                save_id_mapping(insights_id, relic_id)
+                return relic_id
+    except:
+        pass
+
+    return insights_id # Fallback to original if all fails
+
+
+def get_native_matches(relic_id: str, start: int = 0, count: int = 100):
+    url = f"https://aoe-api.reliclink.com/community/leaderboard/getRecentMatchHistory?title=age2&profile_ids=[{relic_id}]&start={start}&count={count}"
+    try:
+        # Relic API uses a self-signed or invalid cert for aoe-api.reliclink.com sometimes
+        # or it's valid for *.worldsedgelink.com. We'll use verify=False for now as it's common for this API.
+        resp = SESSION.get(url, timeout=30, verify=False)
+        if resp.status_code != 200:
+            print(f"Error fetching from native API: {resp.status_code}")
+            return None
+        return resp.json()
+    except Exception as e:
+        print(f"Exception fetching from native API: {e}")
+        return None
+
+
+def parse_native_match(raw_match, profiles_map):
+    match_id = str(raw_match.get("id"))
+    match_type_id = raw_match.get("matchtype_id")
+    mode = MODE_MAP.get(match_type_id, f"Mode {match_type_id}")
+    
+    raw_map = raw_match.get("mapname", "Unknown Map")
+    map_name = clean_map_name(raw_map)
+    
+    start_ts = raw_match.get("startgametime")
+    end_ts = raw_match.get("completiontime")
+    
+    start_dt = dt.datetime.fromtimestamp(start_ts) if start_ts else None
+    end_dt = dt.datetime.fromtimestamp(end_ts) if end_ts else None
+    
+    duration_str = None
+    if start_ts and end_ts:
+        diff = end_ts - start_ts
+        h = diff // 3600
+        m = (diff % 3600) // 60
+        s = diff % 60
+        if h > 0:
+            duration_str = f"{h}h {m}m {s}s"
+        else:
+            duration_str = f"{m}m {s}s"
+
+    teams_data = defaultdict(list)
+    members = raw_match.get("matchhistorymember", [])
+    
+    # Pre-scan members to determine team winners if possible
+    # (Though we determine per-player win status now)
+    
+    for member in members:
+        p_id = str(member.get("profile_id"))
+        p_info = profiles_map.get(p_id, {})
+        team_id = member.get("teamid")
+        
+        civ_id = member.get("civilization_id")
+        civ_name = CIV_MAP.get(civ_id, f"Civ {civ_id}")
+        
+        old_r = member.get("oldrating")
+        new_r = member.get("newrating")
+        elo_change = (new_r - old_r) if (new_r is not None and old_r is not None) else None
+        
+        # We construct a partial player object to use our helper
+        # Note: 'outcome' is typically 1 (win) or 0 (loss) in API
+        # We pass the raw member dict which contains 'outcome'
+        
+        player_obj = {
+            "player_id": p_id,
+            "player_name": p_info.get("alias", p_info.get("name", "Unknown")),
+            "civ_id": civ_id,
+            "civ": civ_name,
+            "elo": old_r,
+            "elo_change": elo_change,
+            "strategy": None,
+            "won": False, # Placeholder
+            # Internal fields for determining win
+            "outcome": member.get("outcome")
+        }
+        
+        teams_data[team_id].append(player_obj)
+    
     teams = []
-    for team in tile.select("ul.team"):
-        team_info = {"won": "won" in team.get("class", []), "players": []}
-        for li in team.select("li"):
-            anchor = li.select_one("a[href^='/user/']")
-            player_name = anchor.get_text(strip=True) if anchor else None
-            player_href = anchor.get("href") if anchor else None
-            player_id = None
-            if player_href:
-                parts = [p for p in player_href.split("/") if p]
-                if len(parts) >= 2:
-                    player_id = parts[1]
-            civ_icon = li.select_one("i.image-icon")
-            civ = civ_icon.get("title") if civ_icon else None
-            rating_span = li.select_one(".rating span")
-            rating = parse_int(rating_span.get_text()) if rating_span else None
-            change_span = li.select_one(".rating-change")
-            rating_change = parse_int(change_span.get_text(strip=True)) if change_span else None
-            strat_em = li.select_one(".strategy em")
-            strategy = strat_em.get_text(strip=True) if strat_em else None
-            if not strategy:
-                strat_node = li.select_one(".strategy")
-                strategy = strat_node.get_text(" ", strip=True) if strat_node else None
-            team_info["players"].append(
-                {
-                    "player_id": player_id,
-                    "player_name": player_name,
-                    "civ": civ,
-                    "elo": rating,
-                    "elo_change": rating_change,
-                    "strategy": strategy,
-                }
-            )
-        teams.append(team_info)
-    start_iso = format_dt(start_dt)
-    end_iso = format_dt(end_dt)
+    for t_id in sorted(teams_data.keys()):
+        players = teams_data[t_id]
+        # First determine win for each player
+        team_obj = {"won": False} # Mutable for fallback
+        
+        # Check if any player has definite win
+        for p in players:
+            p["won"] = determine_win(team_obj, p)
+            # Remove internal fields before saving
+            p.pop("outcome", None)
+            
+        # Refine team won status: if any player won, team won?
+        # Or usually team outcome is shared.
+        # We'll set team "won" if majority won, but really we rely on individual player win for stats
+        team_won = any(p["won"] for p in players)
+        
+        teams.append({
+            "won": team_won,
+            "players": players
+        })
+
     return {
-        "game_id": game_id,
+        "game_id": match_id,
         "mode": mode,
         "map": map_name,
-        "duration": duration,
-        "start_datetime": start_iso,
-        "end_datetime": end_iso,
+        "duration": duration_str,
+        "start_datetime": format_dt(start_dt),
+        "end_datetime": format_dt(end_dt),
         "teams": teams,
     }
 
@@ -168,6 +321,10 @@ def normalize_match(match):
     if not isinstance(match, dict):
         return None
     game_id = match.get("game_id") or match.get("match_id")
+    
+    raw_map = match.get("map") or match.get("map_name") or "Unknown Map"
+    map_name = clean_map_name(raw_map)
+    
     teams = match.get("teams") or []
     normalized_teams = []
     for team in teams:
@@ -177,6 +334,7 @@ def normalize_match(match):
                 {
                     "player_id": p.get("player_id") or p.get("id"),
                     "player_name": p.get("player_name") or p.get("name"),
+                    "civ_id": p.get("civ_id"),
                     "civ": p.get("civ"),
                     "elo": p.get("elo"),
                     "elo_change": p.get("elo_change"),
@@ -208,7 +366,7 @@ def normalize_match(match):
     return {
         "game_id": game_id,
         "mode": match.get("mode"),
-        "map": match.get("map"),
+        "map": map_name,
         "duration": match.get("duration"),
         "start_datetime": dt_iso,
         "end_datetime": end_iso,
@@ -240,44 +398,60 @@ def match_sort_key(match):
 
 
 def save_matches(matches, path: Path):
-    sorted_matches = sorted(matches, key=match_sort_key, reverse=False)
+    # Deduplicate by game_id
+    unique_matches = {}
+    for m in matches:
+        gid = m.get("game_id")
+        if gid:
+            # If we see it again, the later one in the list (newer fetch) might be fresher
+            unique_matches[gid] = m
+    
+    sorted_matches = sorted(unique_matches.values(), key=match_sort_key, reverse=False)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         json.dump(sorted_matches, f, ensure_ascii=False, indent=2)
 
 
-def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pages: int = None):
+def fetch_new_matches(insights_id: str, known_ids=None, start_page: int = 0, max_pages: int = None):
     if max_pages is None:
-        max_pages = MAX_FETCH_PAGES
+        max_pages = 10
+    
+    relic_id = get_relic_id(insights_id)
     known_ids = set(known_ids or [])
-    new_matches = []
+    all_new_matches = []
+    seen_ids = set()
     reached_known = False
-    for page in range(start_page, start_page + max_pages):
-        url = BASE_URL.format(user_id=user_id, page=page)
-        print(f"Fetching page {page} for user {user_id}...")
-        resp = SESSION.get(url, timeout=30)
-        text_lower = resp.text.lower()
-        if "#not found" in text_lower or resp.status_code >= 400:
-            print("Reached '#not found' or hit an HTTP error; stopping fetch.")
+    
+    for i in range(max_pages):
+        start = i * 100
+        print(f"Fetching native matches {start} to {start + 100} for user {insights_id} (relic:{relic_id})...")
+        data = get_native_matches(relic_id, start=start, count=100)
+        
+        if not data or not data.get("matchHistoryStats"):
+            print("No more matches found.")
             break
-        soup = BeautifulSoup(resp.text, "lxml")
-        tiles = soup.select("div.match-tile")
-        if not tiles:
-            print("No match tiles found on this page; stopping fetch.")
-            break
-        for tile in tiles:
-            match = parse_match_tile(tile)
-            game_id = match.get("game_id")
-            if not game_id:
-                continue
+            
+        profiles = {str(p["profile_id"]): p for p in data.get("profiles", [])}
+        matches = data.get("matchHistoryStats")
+        
+        for m in matches:
+            game_id = str(m.get("id"))
             if game_id in known_ids:
-                print(f"Encountered cached match {game_id}; stopping at previously stored data.")
+                print(f"Encountered cached match {game_id}; stopping.")
                 reached_known = True
                 break
-            new_matches.append(match)
+            
+            if game_id in seen_ids:
+                continue
+            
+            parsed = parse_native_match(m, profiles)
+            all_new_matches.append(parsed)
+            seen_ids.add(game_id)
+            
         if reached_known:
             break
-    return new_matches
+            
+    return all_new_matches
 
 
 # --- Ranked RM 1v1 stats ---
@@ -311,15 +485,20 @@ def compute_ranked_stats(matches, user_id: str):
     opp_civ_stats = defaultdict(lambda: {"matches": 0, "wins": 0})
     map_stats = defaultdict(lambda: {"matches": 0, "wins": 0})
 
+    # Get relic ID for the user to match against native API data
+    relic_id = get_relic_id(user_id)
+
     for match in matches:
-        if match.get("mode") != "RM 1v1":
+        if match.get("mode") not in ["RM 1v1", "1v1"]:
             continue
         teams = match.get("teams") or []
         user_team_idx = None
         user_player = None
         for idx, team in enumerate(teams):
             for p in team.get("players", []):
-                if p.get("player_id") == user_id:
+                # Match against either Insights ID or Relic ID
+                p_id = p.get("player_id")
+                if p_id == user_id or p_id == relic_id:
                     user_team_idx = idx
                     user_player = p
                     break
@@ -433,12 +612,14 @@ def print_ranked_analytics(matches_by_user):
 
 
 def user_outcome(match, user_id):
+    relic_id = get_relic_id(user_id)
     teams = match.get("teams") or []
     user_team_idx = None
     user_player = None
     for idx, t in enumerate(teams):
         for p in t.get("players", []):
-            if p.get("player_id") == user_id:
+            p_id = p.get("player_id")
+            if p_id == user_id or p_id == relic_id:
                 user_team_idx = idx
                 user_player = p
                 break
@@ -625,16 +806,22 @@ def refresh_matches(user_id: str, max_pages: int = None):
     print(f"[{user_id}] New matches fetched: {len(new_matches)}")
 
     if new_matches:
-        updated_matches = new_matches + cached_matches
+        # Create a dict to merge and preserve latest
+        all_map = {m["game_id"]: m for m in cached_matches}
+        for m in new_matches:
+            all_map[m["game_id"]] = m
+        updated_matches = list(all_map.values())
         print(f"[{user_id}] Merging {len(new_matches)} new matches with {len(cached_matches)} cached matches...")
     else:
         updated_matches = cached_matches
         print(f"[{user_id}] No new matches added; cache is already up to date.")
 
     save_matches(updated_matches, cache_path)
-    print(f"[{user_id}] Saved {len(updated_matches)} total matches to {cache_path}.")
-    print(f"[{user_id}] Total matches available locally: {len(updated_matches)}")
-    return updated_matches
+    # The count might have changed if there were duplicates in old cache
+    final_matches = load_cached_matches(cache_path)
+    print(f"[{user_id}] Saved {len(final_matches)} unique matches to {cache_path}.")
+    print(f"[{user_id}] Total matches available locally: {len(final_matches)}")
+    return final_matches
 
 
 def main():
@@ -656,3 +843,14 @@ def main():
 
 if __name__ == "__main__":
     main()
+def dedupe_cache_file(path: Path) -> None:
+    if not path.exists():
+        return
+    matches = load_cached_matches(path)
+    # Deduplicate by game_id
+    uniq = {m["game_id"]: m for m in matches}
+    # Sort just in case
+    merged = list(uniq.values())
+    merged.sort(key=match_sort_key, reverse=True)
+    save_matches(merged, path)
+    print(f"Deduped {path}: {len(matches)} -> {len(merged)}")
