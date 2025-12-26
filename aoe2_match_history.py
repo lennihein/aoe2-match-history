@@ -715,7 +715,7 @@ def refresh_matches(user_id: str, max_pages: int = None):
     save_status(user_id, {
         "is_complete": overall_complete, 
         "last_refresh": dt.datetime.now().isoformat(),
-        "last_page_fetched": last_page
+        "last_page_fetched": max(current_status.get("last_page_fetched", 0), last_page)
     })
 
     if new_matches:
@@ -782,7 +782,7 @@ def backfill_history(user_id: str, max_pages: int = None):
         save_status(user_id, {
             "is_complete": overall_complete, 
             "last_refresh": dt.datetime.now().isoformat(),
-            "last_page_fetched": last_page
+            "last_page_fetched": max(current_status.get("last_page_fetched", 0), last_page)
         })
         
         if reached_end or timed_out:
