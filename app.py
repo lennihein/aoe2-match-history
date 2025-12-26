@@ -3,12 +3,16 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import json
+import threading
 from pathlib import Path
 
 # Import logic from match history script
 import aoe2_match_history as mh
 
 app = Flask(__name__)
+
+# Global dictionary to track backfill jobs: {user_id: {"status": "running", "page": 0, "count": 0}}
+BACKFILL_STATUS = {}
 
 SESSION = requests.Session()
 SESSION.headers.update({
@@ -117,13 +121,41 @@ def refresh_player(user_id):
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+def run_backfill(user_id):
+    user_id = str(user_id)
+    try:
+        BACKFILL_STATUS[user_id] = {"status": "running", "page": 0, "count": 0}
+
+        def status_callback(matches, page):
+            if user_id in BACKFILL_STATUS:
+                BACKFILL_STATUS[user_id]["page"] = page
+                BACKFILL_STATUS[user_id]["count"] = len(matches)
+
+        mh.backfill_history(user_id, status_callback=status_callback)
+        BACKFILL_STATUS[user_id]["status"] = "finished"
+    except Exception as e:
+        print(f"Backfill error for {user_id}: {e}")
+        BACKFILL_STATUS[user_id] = {"status": "error", "message": str(e)}
+    # We keep the status for a while so the frontend can see 'finished' or 'error'
+
 @app.route('/user/<user_id>/backfill', methods=['POST'])
 def backfill_player(user_id):
-    try:
-        mh.backfill_history(user_id)
-        return jsonify({"status": "success"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    user_id = str(user_id)
+
+    if user_id in BACKFILL_STATUS and BACKFILL_STATUS[user_id].get("status") == "running":
+        return jsonify({"status": "running", "message": "Backfill already in progress"}), 202
+
+    # Start in background thread
+    thread = threading.Thread(target=run_backfill, args=(user_id,))
+    thread.start()
+
+    return jsonify({"status": "started"}), 202
+
+@app.route('/user/<user_id>/backfill/status', methods=['GET'])
+def backfill_status(user_id):
+    user_id = str(user_id)
+    status = BACKFILL_STATUS.get(user_id, {"status": "not_running"})
+    return jsonify(status)
 
 if __name__ == '__main__':
     app.run(debug=False, port=5000, host='127.0.0.1')

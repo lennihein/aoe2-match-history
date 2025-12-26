@@ -271,7 +271,7 @@ def save_matches(matches, path: Path):
         json.dump(sorted_matches, f, ensure_ascii=False, indent=2)
 
 
-def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pages: int = None, timeout_seconds: int = None, stop_at_known: bool = True):
+def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pages: int = None, timeout_seconds: int = None, stop_at_known: bool = True, progress_callback=None):
     if max_pages is None:
         max_pages = MAX_FETCH_PAGES
     if timeout_seconds is None:
@@ -294,51 +294,64 @@ def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pag
             is_complete = False
             break
             
-        url = BASE_URL.format(user_id=user_id, page=page)
-        print(f"Fetching page {page} for user {user_id}...")
         try:
-            resp = SESSION.get(url, timeout=30)
-        except requests.exceptions.RequestException as e:
-            print(f"Request failed: {e}. Stopping fetch.")
-            is_complete = False
-            break
-            
-        text_lower = resp.text.lower()
-        if "#not found" in text_lower or resp.status_code == 404:
-            print("Reached end of history (#not found or 404).")
-            reached_end = True
+            url = BASE_URL.format(user_id=user_id, page=page)
+            print(f"Fetching page {page} for user {user_id}...")
+            try:
+                resp = SESSION.get(url, timeout=30)
+            except requests.exceptions.RequestException as e:
+                print(f"Request failed: {e}. Stopping fetch.")
+                is_complete = False
+                break
+
+            text_lower = resp.text.lower()
+            if "#not found" in text_lower or resp.status_code == 404:
+                print("Reached end of history (#not found or 404).")
+                reached_end = True
+                last_page = page
+                break
+            if resp.status_code >= 400:
+                print(f"Hit an HTTP error {resp.status_code}; stopping fetch.")
+                is_complete = False
+                break
+            soup = BeautifulSoup(resp.text, "lxml")
+            tiles = soup.select("div.match-tile")
+            if not tiles:
+                print("No match tiles found on this page; stopping fetch.")
+                reached_end = True
+                last_page = page
+                break
+
+            page_has_new = False
+            for tile in tiles:
+                match = parse_match_tile(tile)
+                game_id = match.get("game_id")
+                if not game_id:
+                    continue
+                if game_id in known_ids:
+                    reached_known = True
+                    if stop_at_known:
+                        print(f"Encountered cached match {game_id}; stopping at previously stored data.")
+                        break
+                    else:
+                        continue # Skip and keep looking for older matches
+                new_matches.append(match)
+                page_has_new = True
+
             last_page = page
-            break
-        if resp.status_code >= 400:
-            print(f"Hit an HTTP error {resp.status_code}; stopping fetch.")
+            
+            # Incremental save / progress update
+            if progress_callback and page_has_new and (page % 10 == 0):
+                try:
+                    progress_callback(new_matches, page)
+                except Exception as e:
+                    print(f"Warning: progress_callback failed: {e}")
+
+            if reached_known and stop_at_known:
+                break
+        except Exception as e:
+            print(f"Unexpected error while processing page {page}: {e}. Returning partial results.")
             is_complete = False
-            break
-        soup = BeautifulSoup(resp.text, "lxml")
-        tiles = soup.select("div.match-tile")
-        if not tiles:
-            print("No match tiles found on this page; stopping fetch.")
-            reached_end = True
-            last_page = page
-            break
-            
-        page_has_new = False
-        for tile in tiles:
-            match = parse_match_tile(tile)
-            game_id = match.get("game_id")
-            if not game_id:
-                continue
-            if game_id in known_ids:
-                reached_known = True
-                if stop_at_known:
-                    print(f"Encountered cached match {game_id}; stopping at previously stored data.")
-                    break
-                else:
-                    continue # Skip and keep looking for older matches
-            new_matches.append(match)
-            page_has_new = True
-            
-        last_page = page
-        if reached_known and stop_at_known:
             break
     
     # If we didn't timeout, didn't reach end, and didn't reach known, 
@@ -729,13 +742,45 @@ def refresh_matches(user_id: str, max_pages: int = None):
     return updated_matches
 
 
-def backfill_history(user_id: str, max_pages: int = None):
+def backfill_history(user_id: str, max_pages: int = None, status_callback=None):
     cache_path = cache_path_for(user_id)
     cached_matches = load_cached_matches(cache_path)
     current_status = load_status(user_id)
     
     start_page = current_status.get("last_page_fetched", 0) + 1
     known_ids = {m.get("game_id") for m in cached_matches if m.get("game_id")}
+
+    def _save_progress(current_new_matches, current_page):
+        # Notify external status callback if provided
+        if status_callback:
+            try:
+                status_callback(current_new_matches, current_page)
+            except Exception as e:
+                print(f"Warning: status_callback failed: {e}")
+
+        # Merge with cached matches and save to disk
+        # Note: We duplicate some work (loading/saving) but it ensures data safety.
+        # cached_matches is already loaded.
+        if not current_new_matches:
+            return
+
+        # We need to act on the merged list.
+        # Be careful: current_new_matches grows. We don't want to append it multiple times to cached_matches
+        # in memory if we were mutating cached_matches. But cached_matches is a list.
+        # We create a new list for saving.
+
+        updated = cached_matches + current_new_matches
+        save_matches(updated, cache_path)
+
+        # Update status
+        # We don't know if overall is complete yet, but we know where we are.
+        status_update = {
+            "is_complete": False, # Assume incomplete during progress
+            "last_refresh": dt.datetime.now().isoformat(),
+            "last_page_fetched": current_page
+        }
+        save_status(user_id, status_update)
+        print(f"[{user_id}] Progress saved at page {current_page} ({len(current_new_matches)} new matches so far).")
     
     print(f"[{user_id}] Backfilling history starting from page {start_page}...")
     new_matches, fetch_complete, reached_known, reached_end, last_page = fetch_new_matches(
@@ -744,7 +789,8 @@ def backfill_history(user_id: str, max_pages: int = None):
         start_page=start_page,
         max_pages=max_pages, 
         timeout_seconds=300,
-        stop_at_known=False # Don't stop if we see known games, we are looking for OLDER ones
+        stop_at_known=False, # Don't stop if we see known games, we are looking for OLDER ones
+        progress_callback=_save_progress
     )
     
     print(f"[{user_id}] Older matches fetched: {len(new_matches)} (Complete: {fetch_complete}, Reached end: {reached_end}, Last page: {last_page})")

@@ -292,24 +292,95 @@
 
             btn.disabled = true;
             icon.classList.add('spinning');
-            text.textContent = 'Loading Older...';
+            text.textContent = 'Starting...';
 
             try {
                 const response = await fetch(`/user/${userId}/backfill`, { method: 'POST' });
                 const data = await response.json();
-                if (data.status === 'success') {
-                    window.location.reload();
+
+                if (response.status === 202) {
+                    // Started successfully
+                    pollBackfillStatus(userId);
                 } else {
-                    alert('Error: ' + data.message);
+                    alert('Error: ' + (data.message || 'Unknown error'));
+                    btn.disabled = false;
+                    icon.classList.remove('spinning');
+                    text.textContent = 'Load Older History';
                 }
             } catch (err) {
                 alert('Failed to load older data.');
-            } finally {
                 btn.disabled = false;
                 icon.classList.remove('spinning');
                 text.textContent = 'Load Older History';
             }
         }
+
+        async function pollBackfillStatus(userId) {
+            const btn = document.getElementById('backfillBtn');
+            const icon = document.getElementById('backfillIcon');
+            const text = document.getElementById('backfillText');
+
+            // Ensure button is in loading state
+            if (btn) {
+                btn.disabled = true;
+                icon.classList.add('spinning');
+            }
+
+            try {
+                const response = await fetch(`/user/${userId}/backfill/status`);
+                const data = await response.json();
+
+                if (data.status === 'running') {
+                    if (text) text.textContent = `Loading... (Page ${data.page})`;
+                    // Poll again in 2 seconds
+                    setTimeout(() => pollBackfillStatus(userId), 2000);
+                } else if (data.status === 'finished') {
+                    if (text) text.textContent = 'Completed!';
+                    window.location.reload();
+                } else if (data.status === 'error') {
+                    alert('Backfill failed: ' + data.message);
+                    if (btn) btn.disabled = false;
+                    if (icon) icon.classList.remove('spinning');
+                    if (text) text.textContent = 'Load Older History';
+                } else {
+                    // Not running (stopped or unknown)
+                    if (btn) btn.disabled = false;
+                    if (icon) icon.classList.remove('spinning');
+                    if (text) text.textContent = 'Load Older History';
+                }
+            } catch (err) {
+                console.error('Polling error', err);
+                // Retry anyway
+                setTimeout(() => pollBackfillStatus(userId), 2000);
+            }
+        }
+
+        // Check status on page load in case a job is already running
+        document.addEventListener('DOMContentLoaded', () => {
+            // userId is available from the template context, but we need it in JS.
+            // We can extract it from the URL or the template.
+            // The template renders refreshProfile('{{ user_id }}'), so we can grab it from there or cleaner way.
+            // Let's assume user_id is passed as string in the variable `currentUserId`.
+            // We'll add a script tag to define it.
+            if (typeof currentUserId !== 'undefined') {
+                checkInitialStatus(currentUserId);
+            }
+        });
+
+        async function checkInitialStatus(userId) {
+             try {
+                const response = await fetch(`/user/${userId}/backfill/status`);
+                const data = await response.json();
+                if (data.status === 'running') {
+                    pollBackfillStatus(userId);
+                }
+            } catch (e) {
+                console.log("Could not check initial status", e);
+            }
+        }
+    </script>
+    <script>
+        const currentUserId = "{{ user_id }}";
     </script>
 </body>
 
