@@ -12,6 +12,9 @@
 </head>
 
 <body>
+    <button id="themeToggle" class="theme-toggle" aria-label="Toggle Dark Mode">
+        <span class="icon">🌙</span>
+    </button>
     <div class="bg-gradient"></div>
     <div class="container">
         <header class="profile-header">
@@ -34,7 +37,7 @@
             </div>
             <div class="stat-card">
                 <span class="stat-label">Win Rate</span>
-                <span class="stat-value" style="color: #10b981;">{{ "%.1f"|format(stats.wins / stats.total * 100 if
+                <span class="stat-value win">{{ "%.1f"|format(stats.wins / stats.total * 100 if
                     stats.total else 0) }}%</span>
             </div>
             {% if sessions_data %}
@@ -138,21 +141,21 @@
                     {% set win_after_loss = sessions_data.metrics.after_prev.get(False, {}).get('win_rate', 0) %}
                     <div class="psych-card">
                         <span class="psych-label">Winrate after Win</span>
-                        <span class="psych-value" style="color: #fff;">{{ "%.1f"|format(win_after_win) }}%</span>
+                        <span class="psych-value">{{ "%.1f"|format(win_after_win) }}%</span>
                         <span class="subtitle" style="font-size: 0.7rem;">
                             {{ '(Momentum)' if win_after_win > stats.wins / stats.total * 100 else '(Inconsistent)' }}
                         </span>
                     </div>
                     <div class="psych-card">
                         <span class="psych-label">Winrate after Loss</span>
-                        <span class="psych-value" style="color: #fff;">{{ "%.1f"|format(win_after_loss) }}%</span>
+                        <span class="psych-value">{{ "%.1f"|format(win_after_loss) }}%</span>
                         <span class="subtitle" style="font-size: 0.7rem;">
                             {{ '(Mental Giant)' if win_after_loss > 50 else '(Tilt Risk)' }}
                         </span>
                     </div>
                     <div class="psych-card">
                         <span class="psych-label">1st Game Winrate</span>
-                        <span class="psych-value" style="color: #fff;">{{ "%.1f"|format(sessions_data.nth_stats.get(1,
+                        <span class="psych-value">{{ "%.1f"|format(sessions_data.nth_stats.get(1,
                             {}).get('win_rate', 0)) }}%</span>
                         <span class="subtitle" style="font-size: 0.7rem;">(Warmup)</span>
                     </div>
@@ -240,6 +243,7 @@
         {% endif %}
     </div>
 
+    <script src="{{ url_for('static', filename='js/theme.js') }}"></script>
     <script>
         async function refreshProfile(userId) {
             const btn = document.getElementById('refreshBtn');
