@@ -136,7 +136,9 @@ def refresh_player(user_id):
 def run_backfill(user_id):
     user_id = str(user_id)
     try:
-        BACKFILL_STATUS[user_id] = {"status": "running", "page": 0, "count": 0}
+        current_status = mh.load_status(user_id)
+        start_page = current_status.get("last_page_fetched", 0)
+        BACKFILL_STATUS[user_id] = {"status": "running", "page": start_page, "count": 0}
 
         def status_callback(matches, page):
             if user_id in BACKFILL_STATUS:

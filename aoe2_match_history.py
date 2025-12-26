@@ -19,7 +19,7 @@ SESSION_IDLE_MINUTES = 20  # minimum idle time (after previous game's end) to st
 # Set to a list like ["RM 1v1"] to restrict session analytics to specific modes, or None for all
 SESSION_MODE_FILTER = None
 MAX_FETCH_PAGES = 2000
-FETCH_TIMEOUT_SECONDS = 12
+FETCH_TIMEOUT_SECONDS = 5
 
 SESSION = requests.Session()
 SESSION.headers.update(
@@ -345,7 +345,7 @@ def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pag
             last_page = page
             
             # Incremental save / progress update
-            if progress_callback and page_has_new and (page % 10 == 0):
+            if progress_callback:
                 try:
                     progress_callback(new_matches, page)
                 except Exception as e:
@@ -730,7 +730,7 @@ def refresh_matches(user_id: str, max_pages: int = None):
     save_status(user_id, {
         "is_complete": overall_complete, 
         "last_refresh": dt.datetime.now().isoformat(),
-        "last_page_fetched": last_page
+        "last_page_fetched": max(last_page, current_status.get("last_page_fetched", 0))
     })
 
     if new_matches:
@@ -765,16 +765,13 @@ def backfill_history(user_id: str, max_pages: int = None, status_callback=None):
         # Merge with cached matches and save to disk
         # Note: We duplicate some work (loading/saving) but it ensures data safety.
         # cached_matches is already loaded.
-        if not current_new_matches:
-            return
-
-        # We need to act on the merged list.
-        # Be careful: current_new_matches grows. We don't want to append it multiple times to cached_matches
-        # in memory if we were mutating cached_matches. But cached_matches is a list.
-        # We create a new list for saving.
-
-        updated = cached_matches + current_new_matches
-        save_matches(updated, cache_path)
+        if current_new_matches:
+            # We need to act on the merged list.
+            # Be careful: current_new_matches grows. We don't want to append it multiple times to cached_matches
+            # in memory if we were mutating cached_matches. But cached_matches is a list.
+            # We create a new list for saving.
+            updated = cached_matches + current_new_matches
+            save_matches(updated, cache_path)
 
         # Update status
         # We don't know if overall is complete yet, but we know where we are.
@@ -792,7 +789,7 @@ def backfill_history(user_id: str, max_pages: int = None, status_callback=None):
         known_ids=known_ids, 
         start_page=start_page,
         max_pages=max_pages, 
-        timeout_seconds=300,
+        timeout_seconds=5*60, # 5 minutes
         stop_at_known=False, # Don't stop if we see known games, we are looking for OLDER ones
         progress_callback=_save_progress
     )
@@ -809,7 +806,7 @@ def backfill_history(user_id: str, max_pages: int = None, status_callback=None):
     save_status(user_id, {
         "is_complete": overall_complete, 
         "last_refresh": dt.datetime.now().isoformat(),
-        "last_page_fetched": last_page
+        "last_page_fetched": max(last_page, current_status.get("last_page_fetched", 0))
     })
 
     if new_matches:
