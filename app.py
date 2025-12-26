@@ -171,11 +171,26 @@ def backfill_player(user_id):
 
     return jsonify({"status": "started"}), 202
 
-@app.route('/user/<user_id>/backfill/status', methods=['GET'])
+@app.route('/user/<int:user_id>/backfill/status', methods=['GET'])
 def backfill_status(user_id):
     user_id = str(user_id)
-    status = BACKFILL_STATUS.get(user_id, {"status": "not_running"})
-    return jsonify(status)
+    
+    # Check if ANY process currently has the backfill lock
+    is_running = mh.is_file_locked(mh.status_path_for(user_id))
+    
+    if is_running:
+        # If running, prefer the live disk status for the page/count
+        status = mh.load_status(user_id)
+        return jsonify({
+            "status": "running",
+            "page": status.get("last_page_fetched", 0),
+            "count": status.get("num_matches", 0)
+        })
+    else:
+        # Check if the in-memory state has anything (useful for final success state)
+        # but otherwise default to not_running.
+        status = BACKFILL_STATUS.get(user_id, {"status": "not_running"})
+        return jsonify(status)
 
 if __name__ == '__main__':
     app.run(debug=False, port=5000, host='127.0.0.1')
