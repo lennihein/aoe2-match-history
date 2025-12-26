@@ -286,6 +286,7 @@ def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pag
     reached_known = False
     reached_end = False
     is_complete = True
+    timed_out = False
     
     import time
     start_time = time.time()
@@ -296,6 +297,7 @@ def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pag
         if time.time() - start_time > timeout_seconds:
             print(f"Fetch timed out after {timeout_seconds} seconds. Returning partial results.")
             is_complete = False
+            timed_out = True
             break
             
         try:
@@ -366,7 +368,7 @@ def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pag
         if last_page == start_page + max_pages - 1:
             is_complete = False # We hit the page limit, so it's partial.
         
-    return new_matches, is_complete, reached_known, reached_end, last_page
+    return new_matches, is_complete, reached_known, reached_end, last_page, timed_out
 
 
 # --- Ranked RM 1v1 stats ---
@@ -712,8 +714,8 @@ def refresh_matches(user_id: str, max_pages: int = None):
         print(f"[{user_id}] No cache found yet; starting fresh.")
 
     known_ids = {m.get("game_id") for m in cached_matches if m.get("game_id")}
-    new_matches, fetch_complete, reached_known, reached_end, last_page = fetch_new_matches(user_id, known_ids=known_ids, max_pages=max_pages)
-    print(f"[{user_id}] New matches fetched: {len(new_matches)} (Complete: {fetch_complete}, Reached known: {reached_known}, Reached end: {reached_end}, Last page: {last_page})")
+    new_matches, fetch_complete, reached_known, reached_end, last_page, timed_out = fetch_new_matches(user_id, known_ids=known_ids, max_pages=max_pages)
+    print(f"[{user_id}] New matches fetched: {len(new_matches)} (Complete: {fetch_complete}, Reached known: {reached_known}, Reached end: {reached_end}, Last page: {last_page}, Timed out: {timed_out})")
 
     # Determine overall completeness
     if not fetch_complete:
@@ -763,20 +765,13 @@ def backfill_history(user_id: str, max_pages: int = None, status_callback=None):
                 print(f"Warning: status_callback failed: {e}")
 
         # Merge with cached matches and save to disk
-        # Note: We duplicate some work (loading/saving) but it ensures data safety.
-        # cached_matches is already loaded.
         if current_new_matches:
-            # We need to act on the merged list.
-            # Be careful: current_new_matches grows. We don't want to append it multiple times to cached_matches
-            # in memory if we were mutating cached_matches. But cached_matches is a list.
-            # We create a new list for saving.
             updated = cached_matches + current_new_matches
             save_matches(updated, cache_path)
 
-        # Update status
-        # We don't know if overall is complete yet, but we know where we are.
+        # Update status incrementally
         status_update = {
-            "is_complete": False, # Assume incomplete during progress
+            "is_complete": False, 
             "last_refresh": dt.datetime.now().isoformat(),
             "last_page_fetched": current_page
         }
@@ -784,13 +779,13 @@ def backfill_history(user_id: str, max_pages: int = None, status_callback=None):
         print(f"[{user_id}] Progress saved at page {current_page} ({len(current_new_matches)} new matches so far).")
     
     print(f"[{user_id}] Backfilling history starting from page {start_page}...")
-    new_matches, fetch_complete, reached_known, reached_end, last_page = fetch_new_matches(
+    new_matches, fetch_complete, reached_known, reached_end, last_page, timed_out = fetch_new_matches(
         user_id, 
         known_ids=known_ids, 
         start_page=start_page,
         max_pages=max_pages, 
         timeout_seconds=5*60, # 5 minutes
-        stop_at_known=False, # Don't stop if we see known games, we are looking for OLDER ones
+        stop_at_known=False, 
         progress_callback=_save_progress
     )
     
@@ -800,7 +795,7 @@ def backfill_history(user_id: str, max_pages: int = None, status_callback=None):
     overall_complete = current_status.get("is_complete", False)
     if fetch_complete and reached_end:
         overall_complete = True
-    elif not fetch_complete:
+    elif timed_out or not fetch_complete:
         overall_complete = False
 
     save_status(user_id, {
@@ -810,7 +805,7 @@ def backfill_history(user_id: str, max_pages: int = None, status_callback=None):
     })
 
     if new_matches:
-        updated_matches = cached_matches + new_matches # Older games at the end for merging (save_matches will sort)
+        updated_matches = cached_matches + new_matches
         save_matches(updated_matches, cache_path)
         print(f"[{user_id}] Saved {len(updated_matches)} total matches (added {len(new_matches)} older matches).")
     
