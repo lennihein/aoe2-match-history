@@ -140,10 +140,7 @@ def refresh_player(user_id):
 def run_backfill(user_id):
     user_id = str(user_id)
     try:
-        current_status = mh.load_status(user_id)
-        start_page = current_status.get("last_page_fetched", 0)
-        BACKFILL_STATUS[user_id] = {"status": "running", "page": start_page, "count": 0}
-
+        # Status is now initialized in backfill_player to avoid race conditions
         def status_callback(matches, page):
             if user_id in BACKFILL_STATUS:
                 BACKFILL_STATUS[user_id]["page"] = page
@@ -162,6 +159,11 @@ def backfill_player(user_id):
 
     if user_id in BACKFILL_STATUS and BACKFILL_STATUS[user_id].get("status") == "running":
         return jsonify({"status": "running", "message": "Backfill already in progress"}), 202
+
+    # Initialize status in main thread to avoid race condition with polling
+    current_status = mh.load_status(user_id)
+    start_page = current_status.get("last_page_fetched", 0)
+    BACKFILL_STATUS[user_id] = {"status": "running", "page": start_page, "count": 0}
 
     # Start in background thread
     thread = threading.Thread(target=run_backfill, args=(user_id,))
