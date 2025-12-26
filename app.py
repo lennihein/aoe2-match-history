@@ -16,9 +16,9 @@ SESSION.headers.update({
 })
 
 def search_aoe2_player(name):
-    url = f"https://www.aoe2insights.com/search/?q={name}"
+    url = "https://www.aoe2insights.com/search/"
     try:
-        resp = SESSION.get(url, timeout=10)
+        resp = SESSION.get(url, params={'q': name}, timeout=10)
         if resp.status_code != 200:
             return []
         
@@ -65,8 +65,10 @@ def search():
     players = search_aoe2_player(query)
     return render_template('search_results.html', players=players, query=query)
 
-@app.route('/user/<user_id>')
+@app.route('/user/<int:user_id>')
 def player_profile(user_id):
+    # Ensure user_id is a string for the match history logic
+    user_id = str(user_id)
     player_name = request.args.get('name', f"Player {user_id}")
     cache_path = mh.cache_path_for(user_id)
     matches = mh.load_cached_matches(cache_path)
@@ -104,8 +106,9 @@ def player_profile(user_id):
                            stats=stats,
                            sessions_data=sessions_data)
 
-@app.route('/user/<user_id>/refresh', methods=['POST'])
+@app.route('/user/<int:user_id>/refresh', methods=['POST'])
 def refresh_player(user_id):
+    user_id = str(user_id)
     try:
         mh.refresh_matches(user_id) # Full fetch (up to 2000 pages)
         return jsonify({"status": "success"})
@@ -113,4 +116,4 @@ def refresh_player(user_id):
         return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000, host='0.0.0.0')
+    app.run(debug=False, port=5000, host='127.0.0.1')
