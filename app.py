@@ -127,9 +127,9 @@ def player_stats_partial(user_id):
 @app.route('/user/<int:user_id>/refresh', methods=['POST'])
 def refresh_player(user_id):
     user_id = str(user_id)
-    # Prevent concurrent refresh/backfill for the same user
-    if user_id in BACKFILL_STATUS and BACKFILL_STATUS[user_id].get("status") == "running":
-        return jsonify({"status": "error", "message": "Backfill is currently in progress. Please wait for it to complete."}), 409
+    # Prevent concurrent refresh/backfill for the same user across processes
+    if mh.is_file_locked(mh.status_path_for(user_id)):
+        return jsonify({"status": "error", "message": "A data operation is currently in progress for this user. Please wait."}), 409
         
     try:
         mh.refresh_matches(user_id) # Full fetch (up to 2000 pages)
@@ -156,9 +156,9 @@ def run_backfill(user_id):
 @app.route('/user/<user_id>/backfill', methods=['POST'])
 def backfill_player(user_id):
     user_id = str(user_id)
-
-    if user_id in BACKFILL_STATUS and BACKFILL_STATUS[user_id].get("status") == "running":
-        return jsonify({"status": "running", "message": "Backfill already in progress"}), 202
+    # Prevent concurrent refresh/backfill for the same user across processes
+    if mh.is_file_locked(mh.status_path_for(user_id)):
+        return jsonify({"status": "running", "message": "A data operation is already in progress"}), 202
 
     # Initialize status in main thread to avoid race condition with polling
     current_status = mh.load_status(user_id)
