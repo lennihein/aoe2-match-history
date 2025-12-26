@@ -28,6 +28,15 @@
                 <span id="refreshText">Refresh Data</span>
             </button>
         </header>
+        {% if fetch_status and not fetch_status.is_complete %}
+        <div class="warning-banner">
+            <span class="warning-icon">⚠️</span>
+            <div class="warning-content">
+                <strong>Partial History Loaded</strong>
+                <p>The match history for this player is too large to load fully in one go. Some older matches might be missing.</p>
+            </div>
+        </div>
+        {% endif %}
 
         {% if stats %}
         <div class="stats-grid">

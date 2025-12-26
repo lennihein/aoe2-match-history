@@ -19,6 +19,7 @@ SESSION_IDLE_MINUTES = 20  # minimum idle time (after previous game's end) to st
 # Set to a list like ["RM 1v1"] to restrict session analytics to specific modes, or None for all
 SESSION_MODE_FILTER = None
 MAX_FETCH_PAGES = 2000
+FETCH_TIMEOUT_SECONDS = 30
 
 SESSION = requests.Session()
 SESSION.headers.update(
@@ -99,6 +100,28 @@ def duration_to_real_seconds(duration_str: str, speed_factor: float = GAME_SPEED
 
 def cache_path_for(user_id: str):
     return DATA_DIR / f"matches_{user_id}.json"
+
+
+def status_path_for(user_id: str):
+    return DATA_DIR / f"status_{user_id}.json"
+
+
+def load_status(user_id: str):
+    path = status_path_for(user_id)
+    if path.exists():
+        with path.open("r", encoding="utf-8") as f:
+            try:
+                return json.load(f)
+            except json.JSONDecodeError:
+                pass
+    return {"is_complete": True}
+
+
+def save_status(user_id: str, status: dict):
+    path = status_path_for(user_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(status, f, indent=2)
 
 
 def parse_match_tile(tile):
@@ -246,24 +269,51 @@ def save_matches(matches, path: Path):
         json.dump(sorted_matches, f, ensure_ascii=False, indent=2)
 
 
-def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pages: int = None):
+def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pages: int = None, timeout_seconds: int = None):
     if max_pages is None:
         max_pages = MAX_FETCH_PAGES
+    if timeout_seconds is None:
+        timeout_seconds = FETCH_TIMEOUT_SECONDS
+        
     known_ids = set(known_ids or [])
     new_matches = []
     reached_known = False
+    reached_end = False
+    is_complete = True
+    
+    import time
+    start_time = time.time()
+    
     for page in range(start_page, start_page + max_pages):
+        # Check timeout
+        if time.time() - start_time > timeout_seconds:
+            print(f"Fetch timed out after {timeout_seconds} seconds. Returning partial results.")
+            is_complete = False
+            break
+            
         url = BASE_URL.format(user_id=user_id, page=page)
         print(f"Fetching page {page} for user {user_id}...")
-        resp = SESSION.get(url, timeout=30)
+        try:
+            resp = SESSION.get(url, timeout=30)
+        except requests.exceptions.RequestException as e:
+            print(f"Request failed: {e}. Stopping fetch.")
+            is_complete = False
+            break
+            
         text_lower = resp.text.lower()
-        if "#not found" in text_lower or resp.status_code >= 400:
-            print("Reached '#not found' or hit an HTTP error; stopping fetch.")
+        if "#not found" in text_lower or resp.status_code == 404:
+            print("Reached end of history (#not found or 404).")
+            reached_end = True
+            break
+        if resp.status_code >= 400:
+            print(f"Hit an HTTP error {resp.status_code}; stopping fetch.")
+            is_complete = False
             break
         soup = BeautifulSoup(resp.text, "lxml")
         tiles = soup.select("div.match-tile")
         if not tiles:
             print("No match tiles found on this page; stopping fetch.")
+            reached_end = True
             break
         for tile in tiles:
             match = parse_match_tile(tile)
@@ -277,7 +327,13 @@ def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pag
             new_matches.append(match)
         if reached_known:
             break
-    return new_matches
+    
+    # If we didn't timeout, didn't reach end, and didn't reach known, 
+    # but the loop finished, it means we hit max_pages.
+    if is_complete and not reached_end and not reached_known:
+        is_complete = False # We hit the page limit, so it's partial.
+        
+    return new_matches, is_complete, reached_known, reached_end
 
 
 # --- Ranked RM 1v1 stats ---
@@ -615,14 +671,30 @@ def print_session_analytics(matches_by_user, mode_filter=None):
 def refresh_matches(user_id: str, max_pages: int = None):
     cache_path = cache_path_for(user_id)
     cached_matches = load_cached_matches(cache_path)
+    current_status = load_status(user_id)
+    
     if cache_path.exists():
         print(f"[{user_id}] Loaded {len(cached_matches)} cached matches from {cache_path}.")
     else:
         print(f"[{user_id}] No cache found yet; starting fresh.")
 
     known_ids = {m.get("game_id") for m in cached_matches if m.get("game_id")}
-    new_matches = fetch_new_matches(user_id, known_ids=known_ids, max_pages=max_pages)
-    print(f"[{user_id}] New matches fetched: {len(new_matches)}")
+    new_matches, fetch_complete, reached_known, reached_end = fetch_new_matches(user_id, known_ids=known_ids, max_pages=max_pages)
+    print(f"[{user_id}] New matches fetched: {len(new_matches)} (Complete: {fetch_complete}, Reached known: {reached_known}, Reached end: {reached_end})")
+
+    # Determine overall completeness
+    if not fetch_complete:
+        overall_complete = False
+    elif reached_end:
+        overall_complete = True
+    elif reached_known:
+        # We reached a known match, so we are as complete as we were before
+        overall_complete = current_status.get("is_complete", True)
+    else:
+        # This case should be covered by is_complete = False in fetch_new_matches if it hits max_pages
+        overall_complete = False
+
+    save_status(user_id, {"is_complete": overall_complete, "last_refresh": dt.datetime.now().isoformat()})
 
     if new_matches:
         updated_matches = new_matches + cached_matches

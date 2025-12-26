@@ -75,9 +75,10 @@ def player_profile(user_id):
     
     stats = None
     sessions_data = None
+    fetch_status = mh.load_status(user_id)
+    
     if matches:
         stats = mh.compute_ranked_stats(matches, user_id)
-        # Convert some stats for easy template iteration
         if stats:
             stats['opponents_list'] = mh.sorted_items_list(stats['opponents'], key_fn=lambda r: (-r['matches'], -r['wins']))
             stats['civs_list'] = mh.sorted_items_list(stats['civs'], key_fn=lambda r: (-r['matches'], -r['wins']))
@@ -102,7 +103,8 @@ def player_profile(user_id):
                            player_name=player_name, 
                            matches=matches[:100], # show last 100 in table for stability
                            stats=stats,
-                           sessions_data=sessions_data)
+                           sessions_data=sessions_data,
+                           fetch_status=fetch_status)
 
 @app.route('/user/<user_id>/refresh', methods=['POST'])
 def refresh_player(user_id):

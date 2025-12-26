@@ -175,6 +175,35 @@ button:active {
     box-shadow: 0 0 20px rgba(34, 211, 238, 0.3);
 }
 
+/* Warning Banner */
+.warning-banner {
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 12px;
+    padding: 1rem 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    backdrop-filter: blur(8px);
+}
+
+.warning-icon {
+    font-size: 1.5rem;
+}
+
+.warning-content strong {
+    color: #f59e0b;
+    display: block;
+    font-size: 0.95rem;
+    margin-bottom: 0.25rem;
+}
+
+.warning-content p {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
 /* Stats Dashboard */
 .stats-grid {
     display: grid;
