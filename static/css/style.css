@@ -545,3 +545,104 @@ footer {
     color: var(--text-muted);
     font-size: 0.9rem;
 }
+/* Light Mode Overrides */
+[data-theme="light"] {
+    --bg-dark: #f8fafc;
+    --bg-card: #ffffff;
+    --text-main: #0f172a;
+    --text-muted: #64748b;
+    --glass: rgba(255, 255, 255, 0.7);
+    --primary: #4f46e5;
+    --accent: #0891b2; /* Darker cyan for light mode contrast */
+}
+
+/* Light Mode Specifics */
+[data-theme="light"] h1 {
+    background: linear-gradient(135deg, #0f172a 0%, #475569 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+[data-theme="light"] input[type="text"] {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.1);
+    color: #0f172a;
+}
+
+[data-theme="light"] input[type="text"]:focus {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .data-table th {
+    background: rgba(0, 0, 0, 0.05);
+    color: var(--text-muted);
+}
+
+[data-theme="light"] .data-table td {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .stat-progress-bg {
+    background: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .psych-card {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+/* Fix text colors in light mode that might have been hardcoded white in classes */
+[data-theme="light"] .player-name,
+[data-theme="light"] .stat-name,
+[data-theme="light"] .data-section h2 {
+    color: var(--text-main);
+}
+
+[data-theme="light"] .bg-gradient {
+    /* More subtle gradient for light mode */
+    background: radial-gradient(circle at top right, rgba(99, 102, 241, 0.1), transparent 40%),
+        radial-gradient(circle at bottom left, rgba(34, 211, 238, 0.1), transparent 40%);
+}
+
+[data-theme="light"] .loader {
+    border-color: #cbd5e1;
+    border-bottom-color: var(--primary);
+}
+
+/* Theme Toggle Button */
+.theme-toggle {
+    position: absolute;
+    top: 2rem;
+    right: 2rem;
+    background: var(--glass);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-main);
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    z-index: 100;
+}
+
+.theme-toggle:hover {
+    transform: rotate(15deg) scale(1.1);
+    background: var(--bg-card);
+}
+
+[data-theme="light"] .theme-toggle {
+    border-color: rgba(0,0,0,0.1);
+}
+
+/* Missing utility classes */
+.win {
+    color: #10b981;
+}
+
+.loss {
+    color: #ef4444;
+}
