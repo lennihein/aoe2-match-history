@@ -65,7 +65,7 @@ def index():
 def search():
     query = request.form.get('query', '')
     if not query:
-        return jsonify([])
+        return render_template('search_results.html', players=[], query='')
     players = search_aoe2_player(query)
     return render_template('search_results.html', players=players, query=query)
 
