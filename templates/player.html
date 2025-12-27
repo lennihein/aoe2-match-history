@@ -43,218 +43,9 @@
         </div>
         {% endif %}
 
-        {% if stats %}
-        <div class="stats-grid">
-            <div class="stat-card">
-                <span class="stat-label">RM 1v1 Matches</span>
-                <span class="stat-value">{{ stats.total }}</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-label">Win Rate</span>
-                <span class="stat-value win">{{ "%.1f"|format(stats.wins / stats.total * 100 if
-                    stats.total else 0) }}%</span>
-            </div>
-            {% if sessions_data %}
-            <div class="stat-card">
-                <span class="stat-label">Sessions</span>
-                <span class="stat-value">{{ sessions_data.count }}</span>
-            </div>
-            {% endif %}
+        <div id="live-stats">
+            {% include 'player_content.html' %}
         </div>
-
-        <div class="stats-container">
-            <!-- Civ Performance -->
-            <div class="data-card">
-                <h3>Civilization Performance</h3>
-                <div class="stat-list">
-                    {% for item in stats.civs_list[:5] %}
-                    <div class="stat-item">
-                        <span class="stat-name">{{ item.key }}</span>
-                        <div class="stat-progress-bg">
-                            <div class="stat-progress-bar" style="width: {{ item.win_rate }}%"></div>
-                        </div>
-                        <span class="stat-count">{{ item.wins }}/{{ item.matches }}</span>
-                        <span class="stat-percent">{{ "%.0f"|format(item.win_rate) }}%</span>
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
-
-            <!-- Map Performance -->
-            <div class="data-card">
-                <h3>Map Performance</h3>
-                <div class="stat-list">
-                    {% for item in stats.maps_list[:5] %}
-                    <div class="stat-item">
-                        <span class="stat-name">{{ item.key }}</span>
-                        <div class="stat-progress-bg">
-                            <div class="stat-progress-bar"
-                                style="width: {{ item.win_rate }}%; background: var(--accent);"></div>
-                        </div>
-                        <span class="stat-count">{{ item.wins }}/{{ item.matches }}</span>
-                        <span class="stat-percent">{{ "%.0f"|format(item.win_rate) }}%</span>
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
-        </div>
-
-        <div class="stats-container">
-            <!-- Winrate by Duration -->
-            <div class="data-card">
-                <h3>Winrate by Match Duration</h3>
-                <div class="stat-list">
-                    {% for item in stats.duration_list %}
-                    <div class="stat-item">
-                        <span class="stat-name">{{ item.key }}</span>
-                        <div class="stat-progress-bg">
-                            <div class="stat-progress-bar"
-                                style="width: {{ item.win_rate }}%; background: var(--primary);"></div>
-                        </div>
-                        <span class="stat-count">{{ item.wins }}/{{ item.matches }}</span>
-                        <span class="stat-percent">{{ "%.0f"|format(item.win_rate) }}%</span>
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
-
-            <!-- Session Performance -->
-            {% if sessions_data %}
-            <div class="data-card">
-                <h3>Session Performance (Nth Game)</h3>
-                <div class="stat-list">
-                    {% for n in range(1, 6) %}
-                    {% set game_data = sessions_data.nth_stats.get(n) %}
-                    {% if game_data %}
-                    <div class="stat-item">
-                        <span class="stat-name">Game {{ n }}</span>
-                        <div class="stat-progress-bg">
-                            <div class="stat-progress-bar"
-                                style="width: {{ game_data.win_rate }}%; background: var(--accent);"></div>
-                        </div>
-                        <span class="stat-count">{{ game_data.wins }}/{{ game_data.matches }}</span>
-                        <span class="stat-percent">{{ "%.0f"|format(game_data.win_rate) }}%</span>
-                    </div>
-                    {% endif %}
-                    {% endfor %}
-                </div>
-                <p class="subtitle" style="font-size: 0.75rem; margin-top: 1rem; text-align: center;">
-                    Shows how your performance trends as the session continues.
-                </p>
-            </div>
-            {% endif %}
-        </div>
-
-        <div class="stats-container">
-            <!-- Psychological/Tilt Stats -->
-            {% if sessions_data %}
-            <div class="data-card">
-                <h3>Momentum (In-Session)</h3>
-                <div class="psychology-grid">
-                    {% set win_after_win = sessions_data.metrics.after_prev.get(True, {}).get('win_rate', 0) %}
-                    {% set win_after_loss = sessions_data.metrics.after_prev.get(False, {}).get('win_rate', 0) %}
-                    <div class="psych-card">
-                        <span class="psych-label">Winrate after Win</span>
-                        <span class="psych-value">{{ "%.1f"|format(win_after_win) }}%</span>
-                        <span class="subtitle" style="font-size: 0.7rem;">
-                            {{ '(Momentum)' if win_after_win > stats.wins / stats.total * 100 else '(Inconsistent)' }}
-                        </span>
-                    </div>
-                    <div class="psych-card">
-                        <span class="psych-label">Winrate after Loss</span>
-                        <span class="psych-value">{{ "%.1f"|format(win_after_loss) }}%</span>
-                        <span class="subtitle" style="font-size: 0.7rem;">
-                            {{ '(Mental Giant)' if win_after_loss > 50 else '(Tilt Risk)' }}
-                        </span>
-                    </div>
-                    <div class="psych-card">
-                        <span class="psych-label">1st Game Winrate</span>
-                        <span class="psych-value">{{ "%.1f"|format(sessions_data.nth_stats.get(1,
-                            {}).get('win_rate', 0)) }}%</span>
-                        <span class="subtitle" style="font-size: 0.7rem;">(Warmup)</span>
-                    </div>
-                </div>
-            </div>
-            {% endif %}
-
-            <!-- Toughest Matchups -->
-            <div class="data-card">
-                <h3>Toughest Matchups (Vs Civ)</h3>
-                <div class="stat-list">
-                    {% set tough_matchups = stats.opp_civs_list | selectattr('win_rate', 'lt', 50) | list %}
-                    {% for item in tough_matchups[:3] %}
-                    <div class="stat-item">
-                        <span class="stat-name">{{ item.key }}</span>
-                        <div class="stat-progress-bg">
-                            <div class="stat-progress-bar" style="width: {{ item.win_rate }}%; background: #ef4444;">
-                            </div>
-                        </div>
-                        <span class="stat-percent">{{ "%.0f"|format(item.win_rate) }}%</span>
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
-        </div>
-        {% endif %}
-
-        {% if matches %}
-        <div class="data-section">
-            <h2>Recent Match History</h2>
-            <div class="table-container">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Date</th>
-                            <th>Mode</th>
-                            <th>Map</th>
-                            <th>Duration</th>
-                            <th>ELO Δ</th>
-                            <th>Result</th>
-                            <th>Civ</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for match in matches %}
-                        <tr class="match-row">
-                            <td>{{ match.start_datetime }}</td>
-                            <td title="{{ match.mode }}">{{ match.mode }}</td>
-                            <td title="{{ match.map }}">{{ match.map }}</td>
-                            <td style="color: var(--text-muted); font-size: 0.9rem;">{{ match.duration }}</td>
-                            <td>
-                                {% set ns = namespace(elo_change=0, win=false, civ='') %}
-                                {% for team in match.teams %}
-                                {% for p in team.players %}
-                                {% if p.player_id == user_id %}
-                                {% set ns.elo_change = p.elo_change %}
-                                {% if team.won %}{% set ns.win = true %}{% endif %}
-                                {% set ns.civ = p.civ %}
-                                {% endif %}
-                                {% endfor %}
-                                {% endfor %}
-                                {% if ns.elo_change %}
-                                <span class="{{ 'win' if ns.elo_change > 0 else 'loss' }}">
-                                    {{ '+' if ns.elo_change > 0 }}{{ ns.elo_change }}
-                                </span>
-                                {% else %}
-                                <span style="color: var(--text-muted);">--</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <span class="{{ 'win' if ns.win else 'loss' }}">{{ 'Won' if ns.win else 'Lost' }}</span>
-                            </td>
-                            <td><span class="civ-badge">{{ ns.civ }}</span></td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        {% else %}
-        <div class="search-container" style="text-align: center;">
-            <p class="subtitle">No match history found locally.</p>
-            <p>Click "Refresh Data" to fetch matches from AoE2 Insights.</p>
-        </div>
-        {% endif %}
     </div>
 
     <script src="{{ url_for('static', filename='js/theme.js') }}"></script>
@@ -292,24 +83,119 @@
 
             btn.disabled = true;
             icon.classList.add('spinning');
-            text.textContent = 'Loading Older...';
+            text.textContent = 'Starting...';
 
             try {
                 const response = await fetch(`/user/${userId}/backfill`, { method: 'POST' });
                 const data = await response.json();
-                if (data.status === 'success') {
-                    window.location.reload();
+
+                if (response.status === 202) {
+                    // Started successfully
+                    pollBackfillStatus(userId);
                 } else {
-                    alert('Error: ' + data.message);
+                    alert('Error: ' + (data.message || 'Unknown error'));
+                    btn.disabled = false;
+                    icon.classList.remove('spinning');
+                    text.textContent = 'Load Older History';
                 }
             } catch (err) {
                 alert('Failed to load older data.');
-            } finally {
                 btn.disabled = false;
                 icon.classList.remove('spinning');
                 text.textContent = 'Load Older History';
             }
         }
+
+        let lastMatchCount = 0;
+
+        async function updateStats(userId) {
+            try {
+                const response = await fetch(`/user/${userId}/stats_partial`);
+                if (response.ok) {
+                    const html = await response.text();
+                    const container = document.getElementById('live-stats');
+                    if (container) {
+                        container.innerHTML = html;
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to update stats partial", err);
+            }
+        }
+
+        async function pollBackfillStatus(userId) {
+            const btn = document.getElementById('backfillBtn');
+            const icon = document.getElementById('backfillIcon');
+            const text = document.getElementById('backfillText');
+
+            // Ensure button is in loading state
+            if (btn) {
+                btn.disabled = true;
+                icon.classList.add('spinning');
+            }
+
+            try {
+                const response = await fetch(`/user/${userId}/backfill/status`);
+                const data = await response.json();
+
+                if (data.status === 'running') {
+                    if (text) text.textContent = `Loading... (Page ${data.page})`;
+
+                    // Check if we have new data to show
+                    if (data.count > lastMatchCount) {
+                        lastMatchCount = data.count;
+                        updateStats(userId);
+                    }
+
+                    // Poll again in 2 seconds
+                    setTimeout(() => pollBackfillStatus(userId), 2000);
+                } else if (data.status === 'finished') {
+                    if (text) text.textContent = 'Completed!';
+                    window.location.reload();
+                } else if (data.status === 'error') {
+                    alert('Backfill failed: ' + data.message);
+                    if (btn) btn.disabled = false;
+                    if (icon) icon.classList.remove('spinning');
+                    if (text) text.textContent = 'Load Older History';
+                } else {
+                    // Not running (stopped or unknown)
+                    if (btn) btn.disabled = false;
+                    if (icon) icon.classList.remove('spinning');
+                    if (text) text.textContent = 'Load Older History';
+                }
+            } catch (err) {
+                console.error('Polling error', err);
+                // Retry anyway
+                setTimeout(() => pollBackfillStatus(userId), 2000);
+            }
+        }
+
+        // Check status on page load in case a job is already running
+        document.addEventListener('DOMContentLoaded', () => {
+            // userId is available from the template context, but we need it in JS.
+            // We can extract it from the URL or the template.
+            // The template renders refreshProfile('{{ user_id }}'), so we can grab it from there or cleaner way.
+            // Let's assume user_id is passed as string in the variable `currentUserId`.
+            // We'll add a script tag to define it.
+            if (typeof currentUserId !== 'undefined') {
+                checkInitialStatus(currentUserId);
+            }
+        });
+
+        async function checkInitialStatus(userId) {
+             try {
+                const response = await fetch(`/user/${userId}/backfill/status`);
+                const data = await response.json();
+                if (data.status === 'running') {
+                    pollBackfillStatus(userId);
+                }
+            } catch (e) {
+                console.log("Could not check initial status", e);
+            }
+        }
+    </script>
+    <script>
+        const currentUserId = "{{ user_id }}";
     </script>
 </body>
 

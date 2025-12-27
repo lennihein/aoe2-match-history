@@ -3,12 +3,16 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import json
+import threading
 from pathlib import Path
 
 # Import logic from match history script
 import aoe2_match_history as mh
 
 app = Flask(__name__)
+
+# Global dictionary to track backfill jobs: {user_id: {"status": "running", "page": 0, "count": 0}}
+BACKFILL_STATUS = {}
 
 SESSION = requests.Session()
 SESSION.headers.update({
@@ -65,11 +69,9 @@ def search():
     players = search_aoe2_player(query)
     return render_template('search_results.html', players=players, query=query)
 
-@app.route('/user/<int:user_id>')
-def player_profile(user_id):
+def get_player_context(user_id):
     # Ensure user_id is a string for the match history logic
     user_id = str(user_id)
-    player_name = request.args.get('name', f"Player {user_id}")
     cache_path = mh.cache_path_for(user_id)
     matches = mh.load_cached_matches(cache_path)
     # Sort newest first for display
@@ -77,7 +79,6 @@ def player_profile(user_id):
     
     stats = None
     sessions_data = None
-    fetch_status = mh.load_status(user_id)
     
     if matches:
         stats = mh.compute_ranked_stats(matches, user_id)
@@ -100,30 +101,98 @@ def player_profile(user_id):
                 "nth_stats": nth_stats
             }
 
-    return render_template('player.html', 
-                           user_id=user_id, 
-                           player_name=player_name, 
-                           matches=matches[:100], # show last 100 in table for stability
-                           stats=stats,
-                           sessions_data=sessions_data,
-                           fetch_status=fetch_status)
+    return {
+        "user_id": user_id,
+        "matches": matches[:100], # show last 100 in table for stability
+        "stats": stats,
+        "sessions_data": sessions_data
+    }
+
+@app.route('/user/<int:user_id>')
+def player_profile(user_id):
+    context = get_player_context(user_id)
+    context["player_name"] = request.args.get('name', f"Player {user_id}")
+    context["fetch_status"] = mh.load_status(str(user_id))
+    return render_template('player.html', **context)
+
+@app.route('/user/<int:user_id>/stats_partial')
+def player_stats_partial(user_id):
+    context = get_player_context(user_id)
+    # We don't need player_name or fetch_status for the partial stats view typically,
+    # unless they are used in player_content.html (which stats is, fetch_status maybe not)
+    # Checking player_content.html: it uses stats, sessions_data, matches, user_id.
+    # It does NOT use fetch_status or player_name (header is in player.html).
+    return render_template('player_content.html', **context)
 
 @app.route('/user/<int:user_id>/refresh', methods=['POST'])
 def refresh_player(user_id):
     user_id = str(user_id)
+    # Prevent concurrent refresh/backfill for the same user across processes,
+    # or ANY operation if the global STATE_LOCK is held in this process.
+    if mh.is_file_locked(mh.status_path_for(user_id)) or mh.STATE_LOCK.locked():
+        return jsonify({"status": "error", "message": "A data operation is currently in progress. Please wait."}), 409
+        
     try:
         mh.refresh_matches(user_id) # Full fetch (up to 2000 pages)
         return jsonify({"status": "success"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+def run_backfill(user_id):
+    user_id = str(user_id)
+    try:
+        # Status is now initialized in backfill_player to avoid race conditions
+        def status_callback(matches, page):
+            if user_id in BACKFILL_STATUS:
+                BACKFILL_STATUS[user_id]["page"] = page
+                BACKFILL_STATUS[user_id]["count"] = len(matches)
+
+        mh.backfill_history(user_id, status_callback=status_callback)
+        BACKFILL_STATUS[user_id]["status"] = "finished"
+    except Exception as e:
+        print(f"Backfill error for {user_id}: {e}")
+        BACKFILL_STATUS[user_id] = {"status": "error", "message": str(e)}
+    # We keep the status for a while so the frontend can see 'finished' or 'error'
+
 @app.route('/user/<user_id>/backfill', methods=['POST'])
 def backfill_player(user_id):
-    try:
-        mh.backfill_history(user_id)
-        return jsonify({"status": "success"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    user_id = str(user_id)
+    # Prevent concurrent refresh/backfill for the same user across processes,
+    # or ANY operation if the global STATE_LOCK is held in this process.
+    if mh.is_file_locked(mh.status_path_for(user_id)) or mh.STATE_LOCK.locked():
+        return jsonify({"status": "running", "message": "A data operation is already in progress"}), 202
+
+    # Initialize status in main thread to avoid race condition with polling
+    current_status = mh.load_status(user_id)
+    start_page = current_status.get("last_page_fetched", 0)
+    BACKFILL_STATUS[user_id] = {"status": "running", "page": start_page, "count": 0}
+
+    # Start in background thread
+    thread = threading.Thread(target=run_backfill, args=(user_id,))
+    thread.start()
+
+    return jsonify({"status": "started"}), 202
+
+@app.route('/user/<int:user_id>/backfill/status', methods=['GET'])
+def backfill_status(user_id):
+    user_id = str(user_id)
+    
+    # Check if ANY process currently has the backfill lock
+    is_running = mh.is_file_locked(mh.status_path_for(user_id))
+    
+    if is_running:
+        # If running, prefer the live disk status for the page/count
+        status = mh.load_status(user_id)
+        return jsonify({
+            "status": "running",
+            "page": status.get("last_page_fetched", 0),
+            "count": status.get("num_matches", 0)
+        })
+    else:
+        # Check if the in-memory state has anything (useful for final success state)
+        # but otherwise default to not_running.
+        status = BACKFILL_STATUS.get(user_id, {"status": "not_running"})
+        return jsonify(status)
 
 if __name__ == '__main__':
     app.run(debug=False, port=5000, host='127.0.0.1')

@@ -3,11 +3,81 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+import threading
+import fcntl
+from contextlib import contextmanager
 from collections import defaultdict
 from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
+
+# Thread lock for local coordination (useful if running in single-process mode)
+STATE_LOCK = threading.Lock()
+
+# Process-local lock tracking to guard against same-process flock bypass on Linux.
+# While flock(2) with distinct FDs *usually* blocks in the same process, it's safer
+# to track it explicitly to ensure immediate rejection in web requests.
+_PROCESS_HELD_LOCKS = set()
+_PROCESS_HELD_LOCKS_LOCK = threading.Lock()
+
+def _get_lock_path_str(path: Path) -> str:
+    """Consistently format the lock file path for in-process tracking."""
+    return str(path.with_suffix(".lock").absolute())
+
+@contextmanager
+def file_lock(path: Path):
+    """Linux-specific advisory file lock context manager with in-process tracking."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = path.with_suffix(".lock")
+    lock_path_str = _get_lock_path_str(path)
+    
+    with open(lock_file, "w") as f:
+        try:
+            # Acquire exclusive lock
+            fcntl.flock(f, fcntl.LOCK_EX)
+            
+            # Record that this thread/process holds the lock
+            with _PROCESS_HELD_LOCKS_LOCK:
+                _PROCESS_HELD_LOCKS.add(lock_path_str)
+            
+            try:
+                yield
+            finally:
+                # Release record
+                with _PROCESS_HELD_LOCKS_LOCK:
+                    _PROCESS_HELD_LOCKS.discard(lock_path_str)
+                # Release flock
+                fcntl.flock(f, fcntl.LOCK_UN)
+        except Exception:
+            # Ensure we don't leave the record if acquisition failed (though unlikely after flock blocks)
+            with _PROCESS_HELD_LOCKS_LOCK:
+                _PROCESS_HELD_LOCKS.discard(lock_path_str)
+            raise
+
+def is_file_locked(path: Path):
+    """Check if a file lock is held by another process or thread."""
+    lock_file = path.with_suffix(".lock")
+    if not lock_file.exists():
+        return False
+        
+    # Check in-process registry first
+    lock_path_str = _get_lock_path_str(path)
+    with _PROCESS_HELD_LOCKS_LOCK:
+        if lock_path_str in _PROCESS_HELD_LOCKS:
+            return True
+
+    with open(lock_file, "w") as f:
+        try:
+            # Try to acquire lock non-blockingly
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # If we got it, it wasn't locked (or we just locked it)
+            fcntl.flock(f, fcntl.LOCK_UN)
+            return False
+        except BlockingIOError:
+            return True
+        except Exception:
+            return False
 
 # Configuration (adjust here, no CLI args needed)
 import os
@@ -19,7 +89,7 @@ SESSION_IDLE_MINUTES = 20  # minimum idle time (after previous game's end) to st
 # Set to a list like ["RM 1v1"] to restrict session analytics to specific modes, or None for all
 SESSION_MODE_FILTER = None
 MAX_FETCH_PAGES = 2000
-FETCH_TIMEOUT_SECONDS = 12
+FETCH_TIMEOUT_SECONDS = 5
 
 SESSION = requests.Session()
 SESSION.headers.update(
@@ -122,8 +192,11 @@ def load_status(user_id: str):
 def save_status(user_id: str, status: dict):
     path = status_path_for(user_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
+    # Atomic write-and-replace to prevent corrupted reads
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    with temp_path.open("w", encoding="utf-8") as f:
         json.dump(status, f, indent=2)
+    temp_path.replace(path)
 
 
 def parse_match_tile(tile):
@@ -267,11 +340,15 @@ def match_sort_key(match):
 def save_matches(matches, path: Path):
     sorted_matches = sorted(matches, key=match_sort_key, reverse=False)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
+    # Write to a temporary file first to ensure atomic updates
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    with temp_path.open("w", encoding="utf-8") as f:
         json.dump(sorted_matches, f, ensure_ascii=False, indent=2)
+    # Atomic replace
+    temp_path.replace(path)
 
 
-def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pages: int = None, timeout_seconds: int = None, stop_at_known: bool = True):
+def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pages: int = None, timeout_seconds: int = None, stop_at_known: bool = True, progress_callback=None):
     if max_pages is None:
         max_pages = MAX_FETCH_PAGES
     if timeout_seconds is None:
@@ -296,51 +373,64 @@ def fetch_new_matches(user_id: str, known_ids=None, start_page: int = 1, max_pag
             timed_out = True
             break
             
-        url = BASE_URL.format(user_id=user_id, page=page)
-        print(f"Fetching page {page} for user {user_id}...")
         try:
-            resp = SESSION.get(url, timeout=30)
-        except requests.exceptions.RequestException as e:
-            print(f"Request failed: {e}. Stopping fetch.")
-            is_complete = False
-            break
-            
-        text_lower = resp.text.lower()
-        if "#not found" in text_lower or resp.status_code == 404:
-            print("Reached end of history (#not found or 404).")
-            reached_end = True
+            url = BASE_URL.format(user_id=user_id, page=page)
+            print(f"Fetching page {page} for user {user_id}...")
+            try:
+                resp = SESSION.get(url, timeout=30)
+            except requests.exceptions.RequestException as e:
+                print(f"Request failed: {e}. Stopping fetch.")
+                is_complete = False
+                break
+
+            text_lower = resp.text.lower()
+            if "#not found" in text_lower or resp.status_code == 404:
+                print("Reached end of history (#not found or 404).")
+                reached_end = True
+                last_page = page
+                break
+            if resp.status_code >= 400:
+                print(f"Hit an HTTP error {resp.status_code}; stopping fetch.")
+                is_complete = False
+                break
+            soup = BeautifulSoup(resp.text, "lxml")
+            tiles = soup.select("div.match-tile")
+            if not tiles:
+                print("No match tiles found on this page; stopping fetch.")
+                reached_end = True
+                last_page = page
+                break
+
+            page_has_new = False
+            for tile in tiles:
+                match = parse_match_tile(tile)
+                game_id = match.get("game_id")
+                if not game_id:
+                    continue
+                if game_id in known_ids:
+                    reached_known = True
+                    if stop_at_known:
+                        print(f"Encountered cached match {game_id}; stopping at previously stored data.")
+                        break
+                    else:
+                        continue # Skip and keep looking for older matches
+                new_matches.append(match)
+                page_has_new = True
+
             last_page = page
-            break
-        if resp.status_code >= 400:
-            print(f"Hit an HTTP error {resp.status_code}; stopping fetch.")
+            
+            # Incremental save / progress update
+            if progress_callback:
+                try:
+                    progress_callback(new_matches, page)
+                except Exception as e:
+                    print(f"Warning: progress_callback failed: {e}")
+
+            if reached_known and stop_at_known:
+                break
+        except Exception as e:
+            print(f"Unexpected error while processing page {page}: {e}. Returning partial results.")
             is_complete = False
-            break
-        soup = BeautifulSoup(resp.text, "lxml")
-        tiles = soup.select("div.match-tile")
-        if not tiles:
-            print("No match tiles found on this page; stopping fetch.")
-            reached_end = True
-            last_page = page
-            break
-            
-        page_has_new = False
-        for tile in tiles:
-            match = parse_match_tile(tile)
-            game_id = match.get("game_id")
-            if not game_id:
-                continue
-            if game_id in known_ids:
-                reached_known = True
-                if stop_at_known:
-                    print(f"Encountered cached match {game_id}; stopping at previously stored data.")
-                    break
-                else:
-                    continue # Skip and keep looking for older matches
-            new_matches.append(match)
-            page_has_new = True
-            
-        last_page = page
-        if reached_known and stop_at_known:
             break
     
     # If we didn't timeout, didn't reach end, and didn't reach known, 
@@ -688,113 +778,128 @@ def print_session_analytics(matches_by_user, mode_filter=None):
 
 def refresh_matches(user_id: str, max_pages: int = None):
     cache_path = cache_path_for(user_id)
-    cached_matches = load_cached_matches(cache_path)
-    current_status = load_status(user_id)
     
-    if cache_path.exists():
-        print(f"[{user_id}] Loaded {len(cached_matches)} cached matches from {cache_path}.")
-    else:
-        print(f"[{user_id}] No cache found yet; starting fresh.")
-
-    known_ids = {m.get("game_id") for m in cached_matches if m.get("game_id")}
-    new_matches, fetch_complete, reached_known, reached_end, last_page, timed_out = fetch_new_matches(user_id, known_ids=known_ids, max_pages=max_pages)
-    print(f"[{user_id}] New matches fetched: {len(new_matches)} (Complete: {fetch_complete}, Reached known: {reached_known}, Reached end: {reached_end}, Last page: {last_page}, Timed out: {timed_out})")
-
-    # Determine overall completeness
-    if not fetch_complete:
-        overall_complete = False
-    elif reached_end:
-        overall_complete = True
-    elif reached_known:
-        # We reached a known match, so we are as complete as we were before
-        overall_complete = current_status.get("is_complete", True)
-    else:
-        # This case should be covered by is_complete = False in fetch_new_matches if it hits max_pages
-        overall_complete = False
-
-    save_status(user_id, {
-        "is_complete": overall_complete, 
-        "last_refresh": dt.datetime.now().isoformat(),
-        "last_page_fetched": max(current_status.get("last_page_fetched", 0), last_page)
-    })
-
-    if new_matches:
-        updated_matches = new_matches + cached_matches
-        print(f"[{user_id}] Merging {len(new_matches)} new matches with {len(cached_matches)} cached matches...")
-    else:
-        updated_matches = cached_matches
-        print(f"[{user_id}] No new matches added; cache is already up to date.")
-
-    save_matches(updated_matches, cache_path)
-    print(f"[{user_id}] Saved {len(updated_matches)} total matches to {cache_path}.")
-    print(f"[{user_id}] Total matches available locally: {len(updated_matches)}")
-    return updated_matches
-
-
-def backfill_history(user_id: str, max_pages: int = None):
-    cache_path = cache_path_for(user_id)
-    current_status = load_status(user_id)
-    
-    start_page = current_status.get("last_page_fetched", 0) + 1
-    
-    print(f"[{user_id}] Backfilling history starting from page {start_page}...")
-    
-    batch_size = 20
-    remaining_pages = max_pages if max_pages else MAX_FETCH_PAGES
-    
-    while remaining_pages > 0:
-        cached_matches = load_cached_matches(cache_path)
-        known_ids = {m.get("game_id") for m in cached_matches if m.get("game_id")}
-        chunk = min(batch_size, remaining_pages)
-        
-        new_matches, fetch_complete, reached_known, reached_end, last_page, timed_out = fetch_new_matches(
-            user_id, 
-            known_ids=known_ids, 
-            start_page=start_page,
-            max_pages=chunk, 
-            timeout_seconds=45, # Keep per-batch timeout manageable for web requests
-            stop_at_known=False
-        )
-        
-        print(f"[{user_id}] Batch result: fetched {len(new_matches)} matches. Last page: {last_page}, Timed out: {timed_out}, End: {reached_end}")
-
-        if new_matches:
-            # Multi-process safety: re-load before merge
+    with file_lock(status_path_for(user_id)):
+        with STATE_LOCK:
+            # Load current state inside the lock to ensure it's fresh
             cached_matches = load_cached_matches(cache_path)
-            known_ids = {m.get("game_id") for m in cached_matches if m.get("game_id")}
-            unique_new = [m for m in new_matches if m.get("game_id") not in known_ids]
-            if unique_new:
-                updated_matches = cached_matches + unique_new
-                save_matches(updated_matches, cache_path)
-                print(f"[{user_id}] Saved {len(unique_new)} new matches.")
-
-        # Update status incrementally
-        overall_complete = current_status.get("is_complete", False)
-        if fetch_complete and reached_end:
-            overall_complete = True
-        elif timed_out:
-            overall_complete = False
-        # If fetch_complete is False but not timed_out, it might be due to hit max_pages (chunk size)
-        elif not fetch_complete and not reached_end:
-             # We hit chunk limit, but not end. overall is still partial.
-             overall_complete = False
-
-        save_status(user_id, {
-            "is_complete": overall_complete, 
-            "last_refresh": dt.datetime.now().isoformat(),
-            "last_page_fetched": max(current_status.get("last_page_fetched", 0), last_page)
-        })
-        
-        if reached_end or timed_out:
-            break
+            current_status = load_status(user_id)
             
-        # Prepare for next batch
-        start_page = last_page + 1
-        remaining_pages -= (last_page - (start_page - 1) + 1)
-        if last_page < start_page - 1: # Safety break if no progress made
-            break
+            if cache_path.exists():
+                print(f"[{user_id}] Loaded {len(cached_matches)} cached matches from {cache_path}.")
+            else:
+                print(f"[{user_id}] No cache found yet; starting fresh.")
 
-    return load_cached_matches(cache_path)
+            known_ids = {m.get("game_id") for m in cached_matches if m.get("game_id")}
+            new_matches, fetch_complete, reached_known, reached_end, last_page, timed_out = fetch_new_matches(user_id, known_ids=known_ids, max_pages=max_pages)
+            print(f"[{user_id}] New matches fetched: {len(new_matches)} (Complete: {fetch_complete}, Reached known: {reached_known}, Reached end: {reached_end}, Last page: {last_page}, Timed out: {timed_out})")
+
+            # Determine overall completeness
+            if not fetch_complete:
+                overall_complete = False
+            elif reached_end:
+                overall_complete = True
+            elif reached_known:
+                overall_complete = current_status.get("is_complete", True)
+            else:
+                overall_complete = False
+
+            if new_matches:
+                # Deduplicate and merge
+                existing_ids = {m["game_id"] for m in cached_matches if m.get("game_id")}
+                unique_new = [m for m in new_matches if m.get("game_id") not in existing_ids]
+                updated_matches = unique_new + cached_matches
+                print(f"[{user_id}] Merging {len(unique_new)} new matches with current cache...")
+            else:
+                updated_matches = cached_matches
+                print(f"[{user_id}] No new matches added; cache is current.")
+
+            save_matches(updated_matches, cache_path)
+            
+            save_status(user_id, {
+                "is_complete": overall_complete, 
+                "last_refresh": dt.datetime.now().isoformat(),
+                "last_page_fetched": max(last_page, current_status.get("last_page_fetched", 0)),
+                "num_matches": len(updated_matches)
+            })
+            print(f"[{user_id}] Saved {len(updated_matches)} total matches to {cache_path}.")
+            return updated_matches
+
+
+def backfill_history(user_id: str, max_pages: int = None, status_callback=None):
+    cache_path = cache_path_for(user_id)
+    
+    with file_lock(status_path_for(user_id)):
+        with STATE_LOCK:
+            # Load fresh state inside the lock
+            cached_matches = load_cached_matches(cache_path)
+            current_status = load_status(user_id)
+            
+            start_page = current_status.get("last_page_fetched", 0) + 1
+            known_ids = {m.get("game_id") for m in cached_matches if m.get("game_id")}
+
+            def _save_progress(current_new_matches, current_page):
+                if status_callback:
+                    try:
+                        status_callback(current_new_matches, current_page)
+                    except Exception as e:
+                        print(f"Warning: status_callback failed: {e}")
+
+                if current_new_matches:
+                    # We are already inside the lock in the outer scope
+                    latest_cache = load_cached_matches(cache_path)
+                    existing_ids = {m["game_id"] for m in latest_cache if m.get("game_id")}
+                    unique_new = [m for m in current_new_matches if m.get("game_id") not in existing_ids]
+                    
+                    updated = latest_cache + unique_new
+                    save_matches(updated, cache_path)
+
+                    save_status(user_id, {
+                        "is_complete": False, 
+                        "last_refresh": dt.datetime.now().isoformat(),
+                        "last_page_fetched": current_page,
+                        "num_matches": len(updated)
+                    })
+                    print(f"[{user_id}] Progress saved at page {current_page} ({len(current_new_matches)} new matches so far).")
+            
+            print(f"[{user_id}] Backfilling history starting from page {start_page}...")
+            new_matches, fetch_complete, reached_known, reached_end, last_page, timed_out = fetch_new_matches(
+                user_id, 
+                known_ids=known_ids, 
+                start_page=start_page,
+                max_pages=max_pages, 
+                timeout_seconds=5*60, # 5 minutes
+                stop_at_known=False, 
+                progress_callback=_save_progress
+            )
+            
+            print(f"[{user_id}] Older matches fetched: {len(new_matches)} (Complete: {fetch_complete}, Reached end: {reached_end}, Last page: {last_page})")
+
+            overall_complete = current_status.get("is_complete", False)
+            if fetch_complete and reached_end:
+                overall_complete = True
+            elif timed_out or not fetch_complete:
+                overall_complete = False
+
+            # Final save
+            latest_cache = load_cached_matches(cache_path)
+            if new_matches:
+                existing_ids = {m["game_id"] for m in latest_cache if m.get("game_id")}
+                unique_new = [m for m in new_matches if m.get("game_id") not in existing_ids]
+                updated_matches = latest_cache + unique_new
+                save_matches(updated_matches, cache_path)
+                print(f"[{user_id}] Saved {len(updated_matches)} total matches.")
+            else:
+                updated_matches = latest_cache
+
+            save_status(user_id, {
+                "is_complete": overall_complete, 
+                "last_refresh": dt.datetime.now().isoformat(),
+                "last_page_fetched": max(last_page, current_status.get("last_page_fetched", 0)),
+                "num_matches": len(updated_matches)
+            })
+            
+            return updated_matches
 
 
 def main():
