@@ -15,26 +15,58 @@ from bs4 import BeautifulSoup
 # Thread lock for local coordination (useful if running in single-process mode)
 STATE_LOCK = threading.Lock()
 
+# Process-local lock tracking to guard against same-process flock bypass on Linux.
+# While flock(2) with distinct FDs *usually* blocks in the same process, it's safer
+# to track it explicitly to ensure immediate rejection in web requests.
+_PROCESS_HELD_LOCKS = set()
+_PROCESS_HELD_LOCKS_LOCK = threading.Lock()
+
+def _get_lock_path_str(path: Path) -> str:
+    """Consistently format the lock file path for in-process tracking."""
+    return str(path.with_suffix(".lock").absolute())
+
 @contextmanager
 def file_lock(path: Path):
-    """Linux-specific advisory file lock context manager."""
+    """Linux-specific advisory file lock context manager with in-process tracking."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Ensure lock file exists
     lock_file = path.with_suffix(".lock")
+    lock_path_str = _get_lock_path_str(path)
+    
     with open(lock_file, "w") as f:
         try:
             # Acquire exclusive lock
             fcntl.flock(f, fcntl.LOCK_EX)
-            yield
-        finally:
-            # Release lock
-            fcntl.flock(f, fcntl.LOCK_UN)
+            
+            # Record that this thread/process holds the lock
+            with _PROCESS_HELD_LOCKS_LOCK:
+                _PROCESS_HELD_LOCKS.add(lock_path_str)
+            
+            try:
+                yield
+            finally:
+                # Release record
+                with _PROCESS_HELD_LOCKS_LOCK:
+                    _PROCESS_HELD_LOCKS.discard(lock_path_str)
+                # Release flock
+                fcntl.flock(f, fcntl.LOCK_UN)
+        except Exception:
+            # Ensure we don't leave the record if acquisition failed (though unlikely after flock blocks)
+            with _PROCESS_HELD_LOCKS_LOCK:
+                _PROCESS_HELD_LOCKS.discard(lock_path_str)
+            raise
 
 def is_file_locked(path: Path):
-    """Check if a file lock is held by another process."""
+    """Check if a file lock is held by another process or thread."""
     lock_file = path.with_suffix(".lock")
     if not lock_file.exists():
         return False
+        
+    # Check in-process registry first
+    lock_path_str = _get_lock_path_str(path)
+    with _PROCESS_HELD_LOCKS_LOCK:
+        if lock_path_str in _PROCESS_HELD_LOCKS:
+            return True
+
     with open(lock_file, "w") as f:
         try:
             # Try to acquire lock non-blockingly
